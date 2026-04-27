@@ -28,8 +28,8 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
       system_role: employee.system_role,
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET!, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    const token = jwt.sign(payload, process.env.JWT_SECRET as string, {
+      expiresIn: '7d' as any,
     });
 
     res.json({
