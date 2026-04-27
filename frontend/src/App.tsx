@@ -8,7 +8,7 @@ import { RotaPage } from './pages/RotaPage';
 import { RotaConfigPage } from './pages/RotaConfigPage';
 import { StaffPage } from './pages/StaffPage';
 import { TimeOffPage } from './pages/TimeOffPage';
-import { WageRatesPage } from './pages/WageRatesPage';
+import { WagesPage } from './pages/WagesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -30,7 +30,7 @@ export default function App() {
           <Route path="/rota-config" element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
           <Route path="/staff" element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
           <Route path="/time-off" element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
-          <Route path="/wages" element={<ProtectedRoute><WageRatesPage /></ProtectedRoute>} />
+          <Route path="/wages" element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
