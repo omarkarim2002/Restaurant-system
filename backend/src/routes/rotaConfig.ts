@@ -231,6 +231,7 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
         }
 
         let assignmentCount = 0;
+        const skippedStaff: { name: string; date: string; reason: string }[] = [];
 
         // For each day Mon→Sun
         for (let d = 0; d < 7; d++) {
@@ -270,6 +271,16 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
               .where('end_date', '>=', dateStr)
               .select('employee_id');
             const onTimeOffIds = new Set(onTimeOff.map((r: any) => r.employee_id));
+
+            // Track skipped employees for the summary
+            for (const emp of eligible) {
+              if (onTimeOffIds.has(emp.id)) {
+                const existing = skippedStaff.find(s => s.name === `${emp.first_name} ${emp.last_name}` && s.date === dateStr);
+                if (!existing) {
+                  skippedStaff.push({ name: `${emp.first_name} ${emp.last_name}`, date: dateStr, reason: 'Approved time off' });
+                }
+              }
+            }
 
             const unavailable = await trx('availability')
               .whereIn('employee_id', eligible.map(e => e.id))
@@ -359,12 +370,13 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
           }
         }
 
-        results.push({ week: weekStart, schedule_id: schedule.id, assignments: assignmentCount });
+        results.push({ week: weekStart, schedule_id: schedule.id, assignments: assignmentCount, skipped: skippedStaff });
       });
     }
 
+    const allSkipped = results.flatMap((r: any) => r.skipped || []);
     res.json({
-      data: { results, total_assignments: results.reduce((a, r) => a + r.assignments, 0) },
+      data: { results, total_assignments: results.reduce((a, r) => a + r.assignments, 0), skipped_staff: allSkipped },
       message: `Generated ${results.length} week${results.length !== 1 ? 's' : ''} of rota.`,
     });
 

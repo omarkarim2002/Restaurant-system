@@ -583,6 +583,31 @@ export function RotaConfigPage() {
                   Week of {format(new Date(r.week + 'T12:00:00'), 'dd MMM yyyy')} — {r.assignments} shift{r.assignments !== 1 ? 's' : ''}
                 </div>
               ))}
+
+              {/* Skipped staff summary */}
+              {genResult.data.skipped_staff?.length > 0 && (
+                <div style={{ marginTop: '1rem', background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#633806', marginBottom: '6px' }}>
+                    ℹ {genResult.data.skipped_staff.length} shift{genResult.data.skipped_staff.length !== 1 ? 's' : ''} skipped due to approved time off
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#854f0b', lineHeight: 1.7 }}>
+                    {Array.from(new Set(genResult.data.skipped_staff.map((s: any) => s.name))).map((name: any) => {
+                      const dates = genResult.data.skipped_staff
+                        .filter((s: any) => s.name === name)
+                        .map((s: any) => {
+                          try { return format(new Date(s.date + 'T12:00:00'), 'EEE d MMM'); } catch { return s.date; }
+                        });
+                      return (
+                        <div key={name}><strong>{name}</strong> — {dates.join(', ')}</div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#854f0b', marginTop: '6px', fontStyle: 'italic' }}>
+                    Pending time off requests were ignored — staff were still assigned on those days.
+                  </div>
+                </div>
+              )}
+
               <button className="btn-primary" style={{ marginTop: '1rem' }} onClick={() => window.location.href = '/rota'}>
                 Review rota →
               </button>
