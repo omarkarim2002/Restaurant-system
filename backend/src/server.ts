@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
-
+import rolesRouter from './routes/roles.js';
 import authRouter from './routes/auth.js';
 import employeesRouter from './routes/employees.js';
 import schedulesRouter from './routes/schedules.js';
@@ -45,6 +45,7 @@ app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/employees', apiLimiter, employeesRouter);
 app.use('/api/schedules', apiLimiter, schedulesRouter);
 app.use('/api/time-off', apiLimiter, timeOffRouter);
+app.use('/api/roles', apiLimiter, rolesRouter);
 
 // ─── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
