@@ -1,15 +1,23 @@
 import React, { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import api from '../api/index';
-import { useQuery, useMutation } from '@tanstack/react-query';
-
-const NLW_RATE_FALLBACK = 12.21;
 
 const EMPLOYMENT_TYPE_LABELS: Record<string, string> = {
   full_time: 'Full time',
   part_time: 'Part time',
   casual: 'Casual',
 };
+
+const NLW_FALLBACK = { rate: 12.21, year: '2025', source: 'fallback' };
+
+function useNLW() {
+  return useQuery({
+    queryKey: ['nlw'],
+    queryFn: () => api.get('/wages/nlw').then(r => r.data.data).catch(() => NLW_FALLBACK),
+    staleTime: 1000 * 60 * 60 * 24 * 7,  // 7 days client-side
+    gcTime:    1000 * 60 * 60 * 24 * 30,  // 30 days cache
+  });
+}
 
 function useWageEmployees() {
   return useQuery({
@@ -27,13 +35,15 @@ function useUpdateWage() {
   });
 }
 
-
 export function WageRatesPage() {
   const { data: employees = [], isLoading } = useWageEmployees();
   const { data: nlwData } = useNLW();
-  const NLW_RATE = nlwData?.rate ?? NLW_RATE_FALLBACK;
-  const NLW_YEAR = nlwData?.year ?? '2025';
   const updateWage = useUpdateWage();
+
+  const NLW_RATE = nlwData?.rate ?? NLW_FALLBACK.rate;
+  const NLW_YEAR = nlwData?.year ?? NLW_FALLBACK.year;
+  const NLW_NEXT_YEAR = String(parseInt(NLW_YEAR) + 1).slice(2);
+
   const [editing, setEditing] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, any>>({});
   const [saved, setSaved] = useState<string | null>(null);
@@ -63,10 +73,9 @@ export function WageRatesPage() {
 
     const rate = parseFloat(d.hourly_rate);
     if (isNaN(rate) || rate < 0) {
-      setError('Please enter a valid hourly rate.');
+      setError('Please enter a valid hourly rate (0 or above).');
       return;
     }
-
 
     try {
       await updateWage.mutateAsync({
@@ -93,13 +102,11 @@ export function WageRatesPage() {
 
   const totalWeeklyWageBill = employees.reduce((sum: number, e: any) => {
     const rate = parseFloat(e.hourly_rate) || 0;
-    const hours = e.wage_type === 'salary'
-      ? (e.contracted_hours || e.max_hours_per_week || 40)
-      : (e.max_hours_per_week || 40);
+    const hours = e.contracted_hours || e.max_hours_per_week || 40;
     return sum + rate * hours;
   }, 0);
 
-  const unsetCount = employees.filter((e: any) => !e.hourly_rate || e.hourly_rate === '0.00').length;
+  const unsetCount = employees.filter((e: any) => !e.hourly_rate || parseFloat(e.hourly_rate) === 0).length;
 
   return (
     <div className="page">
@@ -113,7 +120,7 @@ export function WageRatesPage() {
       {/* Summary metrics */}
       <div className="metric-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="metric-card">
-          <div className="metric-label">Staff with rates set</div>
+          <div className="metric-label">Rates set</div>
           <div className="metric-val" style={{ color: '#C41E3A' }}>
             {employees.length - unsetCount}
             <span style={{ fontSize: '14px', fontWeight: 400, color: 'var(--color-text-tertiary)' }}>/{employees.length}</span>
@@ -125,18 +132,20 @@ export function WageRatesPage() {
           <div className="metric-val" style={{ color: '#C9973A' }}>
             £{totalWeeklyWageBill.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
           </div>
-          <div className="metric-sub">based on max contracted hours</div>
+          <div className="metric-sub">based on contracted hours</div>
         </div>
         <div className="metric-card">
-          <div className="metric-label">NLW {NLW_YEAR}/{String(parseInt(NLW_YEAR) + 1).slice(2)}</div>
+          <div className="metric-label">NLW {NLW_YEAR}/{NLW_NEXT_YEAR}</div>
           <div className="metric-val">£{NLW_RATE.toFixed(2)}</div>
-          <div className="metric-sub">{nlwData?.source === 'gov_api' ? 'from gov.uk' : 'reference rate'}</div>
+          <div className="metric-sub" style={{ color: nlwData?.source === 'gov_api' ? '#27500a' : 'var(--color-text-tertiary)' }}>
+            {nlwData?.source === 'gov_api' ? '✓ from gov.uk' : 'reference rate'}
+          </div>
         </div>
       </div>
 
       {unsetCount > 0 && (
         <div style={{ background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 14px', marginBottom: '1.25rem', fontSize: '13px', color: '#633806' }}>
-          ⚠ {unsetCount} employee{unsetCount !== 1 ? 's' : ''} {unsetCount !== 1 ? 'have' : 'has'} no hourly rate set — wages will show as £0.00 until updated.
+          ⚠ {unsetCount} employee{unsetCount !== 1 ? 's have' : ' has'} no hourly rate set — wages will show as £0.00 until updated.
         </div>
       )}
 
@@ -153,16 +162,13 @@ export function WageRatesPage() {
           {/* Table header */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 120px 110px 120px 130px 110px',
-            gap: '0',
+            gridTemplateColumns: '1fr 120px 110px 130px 130px 110px',
             padding: '10px 16px',
             background: 'var(--color-background-secondary)',
             borderBottom: '0.5px solid var(--color-border-tertiary)',
-            fontSize: '11px',
-            fontWeight: 500,
+            fontSize: '11px', fontWeight: 500,
             color: 'var(--color-text-tertiary)',
-            textTransform: 'uppercase',
-            letterSpacing: '.04em',
+            textTransform: 'uppercase', letterSpacing: '.04em',
           }}>
             <div>Employee</div>
             <div>Role</div>
@@ -181,19 +187,15 @@ export function WageRatesPage() {
             const belowMin = hasRate && rate < NLW_RATE;
 
             return (
-              <div
-                key={emp.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 120px 110px 120px 130px 110px',
-                  gap: '0',
-                  padding: '12px 16px',
-                  borderBottom: idx < employees.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none',
-                  alignItems: 'center',
-                  background: isEditing ? 'var(--color-background-secondary)' : isSaved ? '#f0faf0' : 'transparent',
-                  transition: 'background 0.2s',
-                }}
-              >
+              <div key={emp.id} style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 120px 110px 130px 130px 110px',
+                padding: '12px 16px',
+                borderBottom: idx < employees.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none',
+                alignItems: 'center',
+                background: isEditing ? 'var(--color-background-secondary)' : isSaved ? '#f0faf0' : 'transparent',
+                transition: 'background 0.2s',
+              }}>
                 {/* Name */}
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)' }}>
@@ -215,11 +217,8 @@ export function WageRatesPage() {
                 {/* Wage type */}
                 <div>
                   {isEditing ? (
-                    <select
-                      value={d.wage_type}
-                      onChange={e => updateDraft(emp.id, 'wage_type', e.target.value)}
-                      style={{ fontSize: '12px', padding: '4px 6px' }}
-                    >
+                    <select value={d.wage_type} onChange={e => updateDraft(emp.id, 'wage_type', e.target.value)}
+                      style={{ fontSize: '12px', padding: '4px 6px' }}>
                       <option value="hourly">Hourly</option>
                       <option value="salary">Salary</option>
                     </select>
@@ -235,11 +234,7 @@ export function WageRatesPage() {
                   {isEditing ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <span style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>£</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="999"
-                        step="0.01"
+                      <input type="number" min="0" max="9999" step="0.01"
                         value={d.hourly_rate}
                         onChange={e => updateDraft(emp.id, 'hourly_rate', e.target.value)}
                         style={{ width: '80px', fontSize: '13px', padding: '4px 6px' }}
@@ -250,12 +245,14 @@ export function WageRatesPage() {
                     <div>
                       <span style={{
                         fontSize: '14px', fontWeight: 500,
-                        color: !hasRate ? '#d0cec6' : belowMin ? '#9e1830' : 'var(--color-text-primary)',
+                        color: !hasRate ? '#d0cec6' : 'var(--color-text-primary)',
                       }}>
                         {hasRate ? `£${rate.toFixed(2)}` : '—'}
                       </span>
                       {belowMin && (
-                        <div style={{ fontSize: '10px', color: '#8a6220', marginTop: '1px' }}>Below NLW (note only)</div>
+                        <div style={{ fontSize: '10px', color: '#8a6220', marginTop: '1px' }}>
+                          Below NLW (note only)
+                        </div>
                       )}
                     </div>
                   )}
@@ -265,10 +262,7 @@ export function WageRatesPage() {
                 <div>
                   {isEditing ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <input
-                        type="number"
-                        min="1"
-                        max="60"
+                      <input type="number" min="1" max="168"
                         value={d.contracted_hours}
                         onChange={e => updateDraft(emp.id, 'contracted_hours', e.target.value)}
                         placeholder={String(emp.max_hours_per_week)}
@@ -287,25 +281,18 @@ export function WageRatesPage() {
                 <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                   {isEditing ? (
                     <>
-                      <button
-                        onClick={() => saveEdit(emp.id)}
-                        disabled={updateWage.isPending}
-                        style={{ fontSize: '12px', padding: '5px 10px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}
-                      >
+                      <button onClick={() => saveEdit(emp.id)} disabled={updateWage.isPending}
+                        style={{ fontSize: '12px', padding: '5px 10px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}>
                         {updateWage.isPending ? '…' : 'Save'}
                       </button>
-                      <button
-                        onClick={() => cancelEdit(emp.id)}
-                        style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer' }}
-                      >
+                      <button onClick={() => cancelEdit(emp.id)}
+                        style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer' }}>
                         Cancel
                       </button>
                     </>
                   ) : (
-                    <button
-                      onClick={() => startEdit(emp)}
-                      style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: isSaved ? '#27500a' : undefined }}
-                    >
+                    <button onClick={() => startEdit(emp)}
+                      style={{ fontSize: '12px', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer', color: isSaved ? '#27500a' : undefined }}>
                       {isSaved ? '✓ Saved' : !hasRate ? 'Set rate' : 'Edit'}
                     </button>
                   )}
@@ -318,8 +305,8 @@ export function WageRatesPage() {
 
       <div style={{ marginTop: '1rem', fontSize: '12px', color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
         Rates are used to calculate predicted and confirmed wages in the weekly wages summary.
-        Salaried employees: enter their equivalent hourly rate (annual salary ÷ 52 ÷ contracted hours).
-        All rates are stored securely and visible to managers only.
+        For salaried staff, enter the equivalent hourly rate (annual salary ÷ 52 ÷ contracted hours).
+        The NLW figure is fetched from gov.uk and refreshed automatically — shown for reference only.
       </div>
     </div>
   );
