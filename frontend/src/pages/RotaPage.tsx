@@ -8,16 +8,10 @@ import { useClosedDays } from '../hooks/useRotaConfig';
 import { AssignShiftModal } from '../components/rota/AssignShiftModal';
 import { WarningsModal } from '../components/shared/WarningsModal';
 import { ConfirmModal } from '../components/shared/ConfirmModal';
+import { ShiftCard } from '../components/rota/ShiftCard';
 import { schedulesApi } from '../api/index';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-
-const SHIFT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  morning:   { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
-  afternoon: { bg: '#fef9c3', text: '#854d0e', border: '#fde047' },
-  evening:   { bg: '#ede9fe', text: '#5b21b6', border: '#c4b5fd' },
-  full_day:  { bg: '#dcfce7', text: '#166534', border: '#86efac' },
-};
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -63,10 +57,20 @@ export function RotaPage() {
 
   const weekDates = Array.from({ length: 7 }, (_, i) => addDays(selectedWeek, i));
 
+  // Group and sort assignments by date, then by shift start time
   const assignmentsByDate: Record<string, any[]> = {};
   for (const a of schedule?.assignments || []) {
     const key = format(new Date(a.shift_date), 'yyyy-MM-dd');
-    assignmentsByDate[key] = [...(assignmentsByDate[key] || []), a];
+    if (!assignmentsByDate[key]) assignmentsByDate[key] = [];
+    assignmentsByDate[key].push(a);
+  }
+  // Sort each day's assignments: earliest start first
+  for (const key of Object.keys(assignmentsByDate)) {
+    assignmentsByDate[key].sort((a, b) => {
+      const aMin = a.start_time ? parseInt(a.start_time.replace(':', '')) : 0;
+      const bMin = b.start_time ? parseInt(b.start_time.replace(':', '')) : 0;
+      return aMin - bMin;
+    });
   }
 
   const warnings = advisory?.warnings || [];
@@ -83,25 +87,13 @@ export function RotaPage() {
     setDragOver(null);
   }
 
-  function handleDragOver(e: React.DragEvent, dateKey: string) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(dateKey);
-  }
-
-  function handleDragLeave(e: React.DragEvent) {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null);
-  }
-
   function handleDrop(e: React.DragEvent, toDateKey: string) {
     e.preventDefault();
     setDragOver(null);
     const a = dragItem.current;
     if (!a || !currentSchedule) return;
     const fromDate = format(new Date(a.shift_date), 'yyyy-MM-dd');
-    if (fromDate === toDateKey) return;
-    if (closedDates.has(toDateKey)) return;
-
+    if (fromDate === toDateKey || closedDates.has(toDateKey)) return;
     setConfirmMove({
       assignmentId: a.id, employeeName: `${a.first_name} ${a.last_name}`,
       shiftName: a.shift_name, fromDate, toDate: toDateKey,
@@ -159,12 +151,30 @@ export function RotaPage() {
         </div>
       </div>
 
+      {/* Shift legend */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        {[
+          { label: 'Opening', bg: '#bfdbfe', text: '#1e40af' },
+          { label: 'Mid', bg: '#fef08a', text: '#854d0e' },
+          { label: 'Closing', bg: '#ddd6fe', text: '#5b21b6' },
+          { label: 'Full day', bg: '#bbf7d0', text: '#166534' },
+        ].map(({ label, bg, text }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: bg, border: `0.5px solid ${text}40` }} />
+            {label}
+          </div>
+        ))}
+        <div style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+          Sorted earliest → latest within each day
+        </div>
+      </div>
+
       {warnings.length > 0 && (
         <div onClick={() => setShowWarnings(true)} style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '1rem' }}>
           <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#C41E3A', color: 'white', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>!</div>
           <div style={{ flex: 1 }}>
             <span style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>
-              {understaffed.length > 0 && `${understaffed.length} understaffed shift${understaffed.length > 1 ? 's' : ''}`}
+              {understaffed.length > 0 && `${understaffed.length} understaffed`}
               {understaffed.length > 0 && overstaffed.length > 0 && ' · '}
               {overstaffed.length > 0 && `${overstaffed.length} overstaffed`}
             </span>
@@ -176,7 +186,7 @@ export function RotaPage() {
 
       {closedDates.size > 0 && (
         <div style={{ background: '#f7f6f3', border: '0.5px solid var(--color-border-tertiary)', borderRadius: '8px', padding: '8px 14px', marginBottom: '1rem', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-          🔒 {closedDates.size} day{closedDates.size > 1 ? 's' : ''} this week marked as closed
+          🔒 {closedDates.size} day{closedDates.size !== 1 ? 's' : ''} this week marked as closed
         </div>
       )}
 
@@ -191,7 +201,7 @@ export function RotaPage() {
           <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>No schedule for this week yet.</p>
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
             <button className="btn-primary" onClick={() => createSchedule.mutate({ week_start: weekKey })}>Create manually</button>
-            <button className="btn-gold" onClick={() => navigate('/rota-config?tab=generate')}>Auto-generate →</button>
+            <button className="btn-gold" onClick={() => navigate('/rota-config')}>Auto-generate →</button>
           </div>
         </div>
       ) : (
@@ -205,6 +215,7 @@ export function RotaPage() {
                   const hasWarn = warnings.some((w: any) => w.date === key);
                   const isClosed = closedDates.has(key);
                   const closedInfo = closedDaysData.find((c: any) => (c.closed_date?.split?.('T')?.[0] || c.closed_date) === key);
+                  const dayCount = assignmentsByDate[key]?.length ?? 0;
 
                   return (
                     <th key={i} style={{
@@ -218,12 +229,9 @@ export function RotaPage() {
                       <div style={{ fontSize: '11px', fontWeight: 400, color: isClosed ? '#b0aea6' : isToday ? '#C41E3A' : 'var(--color-text-secondary)' }}>
                         {format(date, 'd MMM')}
                       </div>
-                      {isClosed && (
-                        <div style={{ fontSize: '9px', color: '#b0aea6', marginTop: '2px' }}>
-                          🔒 {closedInfo?.reason ? closedInfo.reason.replace('Bank Holiday — ', '') : 'Closed'}
-                        </div>
-                      )}
+                      {isClosed && <div style={{ fontSize: '9px', color: '#b0aea6', marginTop: '2px' }}>🔒 {closedInfo?.reason?.replace('Bank Holiday — ', '') || 'Closed'}</div>}
                       {!isClosed && hasWarn && <div style={{ fontSize: '9px', color: '#C41E3A', marginTop: '2px' }}>⚠ warning</div>}
+                      {!isClosed && dayCount > 0 && <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{dayCount} staff</div>}
                     </th>
                   );
                 })}
@@ -238,17 +246,16 @@ export function RotaPage() {
                   const isDragTarget = dragOver === key && !isClosed;
 
                   return (
-                    <td
-                      key={i}
-                      onDragOver={!isPublished && !isClosed ? (e) => handleDragOver(e, key) : undefined}
-                      onDragLeave={!isPublished ? handleDragLeave : undefined}
+                    <td key={i}
+                      onDragOver={!isPublished && !isClosed ? (e) => { e.preventDefault(); setDragOver(key); } : undefined}
+                      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null); }}
                       onDrop={!isPublished && !isClosed ? (e) => handleDrop(e, key) : undefined}
                       style={{
                         verticalAlign: 'top', padding: '6px',
                         borderRight: '0.5px solid var(--color-border-tertiary)',
-                        minWidth: '110px', minHeight: '80px',
+                        minWidth: '120px', minHeight: '80px',
                         background: isClosed
-                          ? 'repeating-linear-gradient(45deg, #f0efe8, #f0efe8 4px, #f7f6f3 4px, #f7f6f3 12px)'
+                          ? 'repeating-linear-gradient(45deg,#f0efe8,#f0efe8 4px,#f7f6f3 4px,#f7f6f3 12px)'
                           : isDragTarget ? '#eef6ff' : 'transparent',
                         outline: isDragTarget ? '2px dashed #93c5fd' : 'none',
                         outlineOffset: '-2px',
@@ -262,37 +269,18 @@ export function RotaPage() {
                           <span style={{ fontSize: '11px', color: '#b0aea6', fontWeight: 500 }}>Closed</span>
                         </div>
                       )}
-                      {!isClosed && dayAssignments.map((a: any) => {
-                        const colors = SHIFT_COLORS[a.shift_type] || SHIFT_COLORS.morning;
-                        return (
-                          <div
-                            key={a.id}
-                            draggable={!isPublished}
-                            onDragStart={!isPublished ? (e) => handleDragStart(e, a) : undefined}
-                            onDragEnd={!isPublished ? handleDragEnd : undefined}
-                            style={{
-                              background: colors.bg, border: `0.5px solid ${colors.border}`,
-                              borderRadius: '7px', padding: '6px 8px', marginBottom: '4px',
-                              position: 'relative', cursor: isPublished ? 'default' : 'grab',
-                              userSelect: 'none',
-                            }}
-                          >
-                            <div style={{ fontWeight: 500, color: colors.text, fontSize: '12px', paddingRight: '16px' }}>
-                              {a.first_name} {a.last_name}
-                            </div>
-                            <div style={{ fontSize: '11px', color: colors.text, opacity: 0.8 }}>{a.role_name}</div>
-                            <div style={{ fontSize: '10px', color: colors.text, opacity: 0.65, marginTop: '1px' }}>
-                              {a.start_time?.slice(0, 5)} – {a.end_time?.slice(0, 5)}
-                            </div>
-                            {!isPublished && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}`, shiftName: a.shift_name, date: format(new Date(a.shift_date), 'EEEE d MMM') }); }}
-                                style={{ position: 'absolute', top: '4px', right: '5px', background: 'none', border: 'none', cursor: 'pointer', color: colors.text, opacity: 0.55, fontSize: '14px', padding: '0', lineHeight: 1 }}
-                              >×</button>
-                            )}
-                          </div>
-                        );
-                      })}
+
+                      {!isClosed && dayAssignments.map((a: any) => (
+                        <ShiftCard
+                          key={a.id}
+                          assignment={a}
+                          isPublished={isPublished}
+                          onRemove={() => setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}`, shiftName: a.shift_name, date: format(new Date(a.shift_date), 'EEEE d MMM') })}
+                          onDragStart={(e) => handleDragStart(e, a)}
+                          onDragEnd={handleDragEnd}
+                        />
+                      ))}
+
                       {!isPublished && !isClosed && (
                         <button onClick={() => setAddShiftDate(key)} style={{ width: '100%', marginTop: '2px', padding: '5px', fontSize: '11px', cursor: 'pointer', background: 'transparent', border: '0.5px dashed var(--color-border-secondary)', borderRadius: '6px', color: 'var(--color-text-tertiary)' }}>
                           + Add
@@ -314,7 +302,7 @@ export function RotaPage() {
       {confirmRemove && (
         <ConfirmModal
           title="Remove this shift?"
-          message={`Remove ${confirmRemove.name} from the ${confirmRemove.shiftName} shift on ${confirmRemove.date}?`}
+          message={`Remove ${confirmRemove.name} from the ${confirmRemove.shiftName} on ${confirmRemove.date}?`}
           confirmLabel="Remove shift" cancelLabel="Keep" danger
           onConfirm={() => { removeAssignment.mutate(confirmRemove.id); setConfirmRemove(null); }}
           onCancel={() => setConfirmRemove(null)}
