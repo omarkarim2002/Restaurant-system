@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { format, startOfWeek } from 'date-fns';
 import { useRotaConfig, useSaveRotaConfig, useClosedDays, useAddClosedDay, useRemoveClosedDay, useGenerateRota } from '../hooks/useRotaConfig';
-import { useEmployees } from '../hooks/useRota';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -13,11 +12,75 @@ const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6, 0].map(d => ({
   is_open: true,
 }));
 
-const DEFAULT_SECTIONS = [
-  { name: 'Kitchen', role_id: null, min_staff: 2, max_staff: 4, shift_start_1: '08:00', shift_end_1: '16:00', shift_start_2: '14:00', shift_end_2: '23:00', show_end_1: true, show_end_2: true },
-  { name: 'Front of House', role_id: null, min_staff: 3, max_staff: 6, shift_start_1: '10:00', shift_end_1: '18:00', shift_start_2: '16:00', shift_end_2: '23:00', show_end_1: true, show_end_2: true },
-  { name: 'Bar', role_id: null, min_staff: 1, max_staff: 3, shift_start_1: '12:00', shift_end_1: null, shift_start_2: null, shift_end_2: null, show_end_1: false, show_end_2: false },
+// Each section now has a `shifts` array instead of fixed shift_1/shift_2 fields
+interface ShiftSlot {
+  start: string;
+  end: string | null;
+  show_end: boolean;
+}
+
+interface Section {
+  name: string;
+  role_id: string | null;
+  min_staff: number;
+  max_staff: number;
+  shifts: ShiftSlot[];
+}
+
+const DEFAULT_SECTIONS: Section[] = [
+  {
+    name: 'Kitchen', role_id: null, min_staff: 2, max_staff: 4,
+    shifts: [
+      { start: '08:00', end: '16:00', show_end: true },
+      { start: '14:00', end: '23:00', show_end: true },
+    ],
+  },
+  {
+    name: 'Front of House', role_id: null, min_staff: 3, max_staff: 6,
+    shifts: [
+      { start: '10:00', end: '18:00', show_end: true },
+      { start: '16:00', end: '23:00', show_end: true },
+    ],
+  },
+  {
+    name: 'Bar', role_id: null, min_staff: 1, max_staff: 3,
+    shifts: [
+      { start: '12:00', end: null, show_end: false },
+    ],
+  },
 ];
+
+// Convert flat DB format → section with shifts array
+function fromDb(s: any): Section {
+  const shifts: ShiftSlot[] = [
+    { start: s.shift_start_1 || '09:00', end: s.shift_end_1 || null, show_end: s.shift_end_1 != null },
+  ];
+  if (s.shift_start_2) {
+    shifts.push({ start: s.shift_start_2, end: s.shift_end_2 || null, show_end: s.shift_end_2 != null });
+  }
+  // Handle extra shifts stored in shift_start_3..N if present
+  let n = 3;
+  while (s[`shift_start_${n}`]) {
+    shifts.push({ start: s[`shift_start_${n}`], end: s[`shift_end_${n}`] || null, show_end: s[`shift_end_${n}`] != null });
+    n++;
+  }
+  return { name: s.name, role_id: s.role_id, min_staff: s.min_staff, max_staff: s.max_staff, shifts };
+}
+
+// Convert section with shifts array → flat DB format
+function toDb(s: Section, sort_order: number) {
+  const flat: any = { name: s.name, role_id: s.role_id, min_staff: s.min_staff, max_staff: s.max_staff, sort_order };
+  s.shifts.forEach((sh, i) => {
+    flat[`shift_start_${i + 1}`] = sh.start;
+    flat[`shift_end_${i + 1}`] = sh.show_end ? sh.end : null;
+  });
+  // Null out any slots beyond what we have (up to 5)
+  for (let i = s.shifts.length + 1; i <= 5; i++) {
+    flat[`shift_start_${i}`] = null;
+    flat[`shift_end_${i}`] = null;
+  }
+  return flat;
+}
 
 type Tab = 'working-hours' | 'sections' | 'closed-days' | 'generate';
 
@@ -33,7 +96,7 @@ export function RotaConfigPage() {
   const [error, setError] = useState('');
   const [workingDays, setWorkingDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 0]);
   const [dayConfigs, setDayConfigs] = useState(DEFAULT_DAYS);
-  const [sections, setSections] = useState(DEFAULT_SECTIONS as any[]);
+  const [sections, setSections] = useState<Section[]>(DEFAULT_SECTIONS);
   const { data: closedDays = [] } = useClosedDays();
   const [newClosedDate, setNewClosedDate] = useState('');
   const [newClosedReason, setNewClosedReason] = useState('');
@@ -47,13 +110,7 @@ export function RotaConfigPage() {
     if (!config) return;
     if (config.working_days) setWorkingDays(config.working_days);
     if (config.days?.length > 0) setDayConfigs(config.days);
-    if (config.sections?.length > 0) {
-      setSections(config.sections.map((s: any) => ({
-        ...s,
-        show_end_1: s.shift_end_1 != null,
-        show_end_2: s.shift_end_2 != null,
-      })));
-    }
+    if (config.sections?.length > 0) setSections(config.sections.map(fromDb));
   }, [config]);
 
   useEffect(() => {
@@ -61,51 +118,72 @@ export function RotaConfigPage() {
       .then(r => r.json()).then(d => setDbRoles(d.data || [])).catch(() => {});
   }, []);
 
-  function toggleWorkingDay(d: number) {
-    setWorkingDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  // ── Section helpers ──────────────────────────────────────────────────────────
+
+  function updateSection(i: number, field: keyof Omit<Section, 'shifts'>, value: any) {
+    setSections(prev => prev.map((s, idx) => idx === i ? { ...s, [field]: value } : s));
   }
 
-  function updateDayConfig(dow: number, field: string, value: any) {
-    setDayConfigs(prev => prev.map(dc => dc.day_of_week === dow ? { ...dc, [field]: value } : dc));
+  function addShiftSlot(sectionIdx: number) {
+    setSections(prev => prev.map((s, i) => {
+      if (i !== sectionIdx) return s;
+      return { ...s, shifts: [...s.shifts, { start: '12:00', end: null, show_end: false }] };
+    }));
+  }
+
+  function removeShiftSlot(sectionIdx: number, shiftIdx: number) {
+    setSections(prev => prev.map((s, i) => {
+      if (i !== sectionIdx) return s;
+      if (s.shifts.length <= 1) return s; // always keep at least one
+      return { ...s, shifts: s.shifts.filter((_, si) => si !== shiftIdx) };
+    }));
+  }
+
+  function updateShiftSlot(sectionIdx: number, shiftIdx: number, field: keyof ShiftSlot, value: any) {
+    setSections(prev => prev.map((s, i) => {
+      if (i !== sectionIdx) return s;
+      return {
+        ...s,
+        shifts: s.shifts.map((sh, si) => si === shiftIdx ? { ...sh, [field]: value } : sh),
+      };
+    }));
+  }
+
+  function toggleShowEnd(sectionIdx: number, shiftIdx: number) {
+    setSections(prev => prev.map((s, i) => {
+      if (i !== sectionIdx) return s;
+      return {
+        ...s,
+        shifts: s.shifts.map((sh, si) => {
+          if (si !== shiftIdx) return sh;
+          const nowShowing = !sh.show_end;
+          return { ...sh, show_end: nowShowing, end: nowShowing ? (sh.end || '') : null };
+        }),
+      };
+    }));
   }
 
   function addSection() {
     setSections(prev => [...prev, {
-      name: `Section ${prev.length + 1}`, role_id: null,
-      min_staff: 1, max_staff: 3,
-      shift_start_1: '09:00', shift_end_1: null, show_end_1: false,
-      shift_start_2: null, shift_end_2: null, show_end_2: false,
+      name: `Section ${prev.length + 1}`, role_id: null, min_staff: 1, max_staff: 3,
+      shifts: [{ start: '09:00', end: null, show_end: false }],
     }]);
-  }
-
-  function updateSection(i: number, field: string, value: any) {
-    setSections(prev => prev.map((s, idx) => idx === i ? { ...s, [field]: value } : s));
-  }
-
-  function toggleShowEnd(i: number, which: '1' | '2') {
-    setSections(prev => prev.map((s, idx) => {
-      if (idx !== i) return s;
-      const field = `show_end_${which}` as const;
-      const endField = `shift_end_${which}` as const;
-      const nowShowing = !s[field];
-      return { ...s, [field]: nowShowing, [endField]: nowShowing ? (s[endField] || '') : null };
-    }));
   }
 
   function removeSection(i: number) {
     setSections(prev => prev.filter((_, idx) => idx !== i));
   }
 
+  // ── Save / Generate ──────────────────────────────────────────────────────────
+
   async function handleSave() {
     setError('');
     try {
-      // Strip UI-only fields before saving
-      const cleanSections = sections.map(({ show_end_1, show_end_2, ...rest }) => ({
-        ...rest,
-        shift_end_1: show_end_1 ? rest.shift_end_1 : null,
-        shift_end_2: show_end_2 ? rest.shift_end_2 : null,
-      }));
-      await saveConfig.mutateAsync({ working_days: workingDays, days: dayConfigs, sections: cleanSections });
+      await saveConfig.mutateAsync({
+        working_days: workingDays,
+        days: dayConfigs,
+        sections: sections.map((s, i) => toDb(s, i)),
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e: any) {
@@ -145,6 +223,9 @@ export function RotaConfigPage() {
     { id: 'generate', label: 'Generate rota' },
   ];
 
+  const shiftLabel = (n: number) =>
+    n === 0 ? 'Primary shift' : n === 1 ? 'Staggered start' : `Staggered start ${n}`;
+
   return (
     <div className="page">
       <div className="page-header">
@@ -170,6 +251,7 @@ export function RotaConfigPage() {
         </div>
       )}
 
+      {/* Tab nav */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '1.5rem', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -183,24 +265,26 @@ export function RotaConfigPage() {
         ))}
       </div>
 
-      {/* ── Working hours ─────────────────────────────────────────────────────── */}
+      {/* ── Working hours ────────────────────────────────────────────────────── */}
       {tab === 'working-hours' && (
         <div>
           <div className="card" style={{ marginBottom: '1rem' }}>
             <h3 style={{ marginBottom: '0.75rem' }}>Working days</h3>
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>
-              Select the days your restaurant is normally open. Add one-off closures in the Closed Days tab.
+              Select the days your restaurant is normally open.
             </p>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {[1,2,3,4,5,6,0].map(d => {
                 const active = workingDays.includes(d);
                 return (
-                  <button key={d} onClick={() => toggleWorkingDay(d)} style={{
-                    width: '52px', height: '52px', borderRadius: '10px', fontSize: '12px', fontWeight: 500,
-                    border: active ? '2px solid #C41E3A' : '0.5px solid var(--color-border-secondary)',
-                    background: active ? '#fde8ec' : 'var(--color-background-secondary)',
-                    color: active ? '#C41E3A' : 'var(--color-text-tertiary)', cursor: 'pointer',
-                  }}>
+                  <button key={d}
+                    onClick={() => setWorkingDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])}
+                    style={{
+                      width: '52px', height: '52px', borderRadius: '10px', fontSize: '12px', fontWeight: 500,
+                      border: active ? '2px solid #C41E3A' : '0.5px solid var(--color-border-secondary)',
+                      background: active ? '#fde8ec' : 'var(--color-background-secondary)',
+                      color: active ? '#C41E3A' : 'var(--color-text-tertiary)', cursor: 'pointer',
+                    }}>
                     {DAY_NAMES[d]}
                   </button>
                 );
@@ -210,9 +294,7 @@ export function RotaConfigPage() {
 
           <div className="card">
             <h3 style={{ marginBottom: '0.25rem' }}>Hours per day</h3>
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>
-              Set open and close times for each working day.
-            </p>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>Set open and close times for each working day.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[1,2,3,4,5,6,0].map(d => {
                 const dc = dayConfigs.find(x => x.day_of_week === d) || { day_of_week: d, open_time: '08:00', close_time: '23:00', is_open: true };
@@ -228,13 +310,13 @@ export function RotaConfigPage() {
                     <div>
                       <label style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '3px' }}>Opens</label>
                       <input type="time" value={dc.open_time} disabled={!isWorking}
-                        onChange={e => updateDayConfig(d, 'open_time', e.target.value)}
+                        onChange={e => setDayConfigs(prev => prev.map(x => x.day_of_week === d ? { ...x, open_time: e.target.value } : x))}
                         style={{ fontSize: '13px', padding: '5px 8px' }} />
                     </div>
                     <div>
                       <label style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', display: 'block', marginBottom: '3px' }}>Closes</label>
                       <input type="time" value={dc.close_time} disabled={!isWorking}
-                        onChange={e => updateDayConfig(d, 'close_time', e.target.value)}
+                        onChange={e => setDayConfigs(prev => prev.map(x => x.day_of_week === d ? { ...x, close_time: e.target.value } : x))}
                         style={{ fontSize: '13px', padding: '5px 8px' }} />
                     </div>
                     <div style={{ fontSize: '11px', color: isWorking ? '#27500a' : 'var(--color-text-tertiary)', textAlign: 'center' }}>
@@ -248,34 +330,36 @@ export function RotaConfigPage() {
         </div>
       )}
 
-      {/* ── Sections & shifts ─────────────────────────────────────────────────── */}
+      {/* ── Sections & shifts ────────────────────────────────────────────────── */}
       {tab === 'sections' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-              Define each section and its shift patterns. Tick "Show end time" to display and set an end time for each shift.
+              Define each section and its shift patterns. Add as many staggered starts as you need.
             </p>
             <button className="btn-gold" onClick={addSection}>+ Add section</button>
           </div>
 
-          {sections.map((section, i) => (
-            <div key={i} className="card" style={{ marginBottom: '1rem', borderLeft: '3px solid #C41E3A', borderRadius: '0 12px 12px 0' }}>
+          {sections.map((section, si) => (
+            <div key={si} className="card" style={{ marginBottom: '1rem', borderLeft: '3px solid #C41E3A', borderRadius: '0 12px 12px 0' }}>
+              {/* Section header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <input
                   value={section.name}
-                  onChange={e => updateSection(i, 'name', e.target.value)}
+                  onChange={e => updateSection(si, 'name', e.target.value)}
                   style={{ fontSize: '15px', fontWeight: 500, border: 'none', background: 'transparent', padding: 0, outline: 'none', color: 'var(--color-text-primary)', width: '220px' }}
                   placeholder="Section name"
                 />
-                <button onClick={() => removeSection(i)} style={{ color: 'var(--color-text-tertiary)', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px' }}>
-                  Remove
+                <button onClick={() => removeSection(si)} style={{ color: 'var(--color-text-tertiary)', border: 'none', background: 'none', cursor: 'pointer', fontSize: '13px' }}>
+                  Remove section
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '1rem' }}>
+              {/* Role + staff counts */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '1.25rem' }}>
                 <div className="form-group">
                   <label className="form-label">Role (optional)</label>
-                  <select value={section.role_id || ''} onChange={e => updateSection(i, 'role_id', e.target.value || null)}>
+                  <select value={section.role_id || ''} onChange={e => updateSection(si, 'role_id', e.target.value || null)}>
                     <option value="">Any role</option>
                     {dbRoles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
@@ -283,107 +367,77 @@ export function RotaConfigPage() {
                 <div className="form-group">
                   <label className="form-label">Min staff per shift</label>
                   <input type="number" min={1} max={20} value={section.min_staff}
-                    onChange={e => updateSection(i, 'min_staff', Number(e.target.value))} />
+                    onChange={e => updateSection(si, 'min_staff', Number(e.target.value))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Max staff per shift</label>
                   <input type="number" min={1} max={20} value={section.max_staff}
-                    onChange={e => updateSection(i, 'max_staff', Number(e.target.value))} />
+                    onChange={e => updateSection(si, 'max_staff', Number(e.target.value))} />
                 </div>
               </div>
 
-              {/* Shift 1 */}
-              <div style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '12px', marginBottom: '8px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
-                  Shift 1 (primary)
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: section.show_end_1 ? '1fr 1fr' : '1fr auto', gap: '12px', alignItems: 'flex-end' }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Start time *</label>
-                    <input type="time" value={section.shift_start_1}
-                      onChange={e => updateSection(i, 'shift_start_1', e.target.value)} />
+              {/* Shift slots */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {section.shifts.map((sh, shi) => (
+                  <div key={shi} style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>
+                        {shiftLabel(shi)}
+                      </div>
+                      {section.shifts.length > 1 && (
+                        <button
+                          onClick={() => removeShiftSlot(si, shi)}
+                          style={{ fontSize: '11px', color: '#9e1830', border: '0.5px solid #f5b8c4', background: '#fde8ec', borderRadius: '6px', padding: '2px 8px', cursor: 'pointer' }}
+                        >
+                          Remove ×
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: sh.show_end ? '1fr 1fr' : '1fr auto', gap: '12px', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Start time {shi === 0 ? '*' : ''}</label>
+                        <input type="time" value={sh.start}
+                          onChange={e => updateShiftSlot(si, shi, 'start', e.target.value)} />
+                      </div>
+
+                      {sh.show_end ? (
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span>End time</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontWeight: 400 }}>
+                              <input type="checkbox" checked onChange={() => toggleShowEnd(si, shi)} style={{ width: 'auto', cursor: 'pointer' }} />
+                              <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Show</span>
+                            </label>
+                          </label>
+                          <input type="time" value={sh.end || ''}
+                            onChange={e => updateShiftSlot(si, shi, 'end', e.target.value || null)} />
+                        </div>
+                      ) : (
+                        <div style={{ paddingBottom: '2px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: 'var(--color-text-tertiary)', userSelect: 'none' }}>
+                            <input type="checkbox" checked={false} onChange={() => toggleShowEnd(si, shi)} style={{ width: 'auto', cursor: 'pointer' }} />
+                            Add end time
+                          </label>
+                        </div>
+                      )}
+                    </div>
                   </div>
-
-                  {section.show_end_1 ? (
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        End time
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontWeight: 400, marginLeft: 'auto' }}>
-                          <input
-                            type="checkbox"
-                            checked={section.show_end_1}
-                            onChange={() => toggleShowEnd(i, '1')}
-                            style={{ width: 'auto', cursor: 'pointer' }}
-                          />
-                          <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Show</span>
-                        </label>
-                      </label>
-                      <input type="time" value={section.shift_end_1 || ''}
-                        onChange={e => updateSection(i, 'shift_end_1', e.target.value || null)} />
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '1px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: 'var(--color-text-tertiary)', userSelect: 'none' }}>
-                        <input
-                          type="checkbox"
-                          checked={false}
-                          onChange={() => toggleShowEnd(i, '1')}
-                          style={{ width: 'auto', cursor: 'pointer' }}
-                        />
-                        Add end time
-                      </label>
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
 
-              {/* Shift 2 */}
-              <div style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '12px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '2px' }}>
-                  Shift 2 (staggered start — optional)
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginBottom: '10px' }}>
-                  Use if staff in this section start at different times
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: section.show_end_2 ? '1fr 1fr' : '1fr auto', gap: '12px', alignItems: 'flex-end' }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Start time</label>
-                    <input type="time" value={section.shift_start_2 || ''}
-                      onChange={e => updateSection(i, 'shift_start_2', e.target.value || null)} />
-                  </div>
-
-                  {section.show_end_2 ? (
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        End time
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontWeight: 400, marginLeft: 'auto' }}>
-                          <input
-                            type="checkbox"
-                            checked={section.show_end_2}
-                            onChange={() => toggleShowEnd(i, '2')}
-                            style={{ width: 'auto', cursor: 'pointer' }}
-                          />
-                          <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Show</span>
-                        </label>
-                      </label>
-                      <input type="time" value={section.shift_end_2 || ''}
-                        onChange={e => updateSection(i, 'shift_end_2', e.target.value || null)} />
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '1px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: 'var(--color-text-tertiary)', userSelect: 'none' }}>
-                        <input
-                          type="checkbox"
-                          checked={false}
-                          onChange={() => toggleShowEnd(i, '2')}
-                          style={{ width: 'auto', cursor: 'pointer' }}
-                        />
-                        Add end time
-                      </label>
-                    </div>
-                  )}
-                </div>
-              </div>
+              {/* Add staggered start */}
+              <button
+                onClick={() => addShiftSlot(si)}
+                style={{
+                  marginTop: '10px', width: '100%', padding: '8px', fontSize: '12px',
+                  cursor: 'pointer', background: 'transparent',
+                  border: '0.5px dashed var(--color-border-secondary)',
+                  borderRadius: '8px', color: 'var(--color-text-tertiary)',
+                }}
+              >
+                + Add staggered start
+              </button>
             </div>
           ))}
 
@@ -396,7 +450,7 @@ export function RotaConfigPage() {
         </div>
       )}
 
-      {/* ── Closed days ───────────────────────────────────────────────────────── */}
+      {/* ── Closed days ──────────────────────────────────────────────────────── */}
       {tab === 'closed-days' && (
         <div>
           <div className="card" style={{ marginBottom: '1rem' }}>
@@ -413,9 +467,7 @@ export function RotaConfigPage() {
                 <label className="form-label">Reason (optional)</label>
                 <input value={newClosedReason} onChange={e => setNewClosedReason(e.target.value)} placeholder="e.g. Bank Holiday, Private event" />
               </div>
-              <button className="btn-primary" onClick={handleAddClosedDay} disabled={!newClosedDate || addClosedDay.isPending}>
-                Add
-              </button>
+              <button className="btn-primary" onClick={handleAddClosedDay} disabled={!newClosedDate || addClosedDay.isPending}>Add</button>
             </div>
           </div>
 
@@ -459,9 +511,7 @@ export function RotaConfigPage() {
                     <div key={cd.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'var(--color-background-secondary)', borderRadius: '8px' }}>
                       <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#C41E3A', flexShrink: 0 }} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: 500 }}>
-                          {format(new Date(dateStr + 'T12:00:00'), 'EEEE d MMMM yyyy')}
-                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{format(new Date(dateStr + 'T12:00:00'), 'EEEE d MMMM yyyy')}</div>
                         {cd.reason && <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>{cd.reason}</div>}
                       </div>
                       <button onClick={() => removeClosedDay.mutate(dateStr)}
@@ -485,7 +535,6 @@ export function RotaConfigPage() {
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
               Creates draft schedules using your section rules, staff availability, and approved time off. Closed days are skipped automatically.
             </p>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
               <div className="form-group">
                 <label className="form-label">Start from</label>
@@ -496,7 +545,8 @@ export function RotaConfigPage() {
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {(['week', 'month'] as const).map(m => (
                     <button key={m} onClick={() => setGenMode(m)} style={{
-                      flex: 1, padding: '9px', fontSize: '13px', fontWeight: genMode === m ? 500 : 400, borderRadius: '8px',
+                      flex: 1, padding: '9px', fontSize: '13px', borderRadius: '8px',
+                      fontWeight: genMode === m ? 500 : 400,
                       background: genMode === m ? '#fde8ec' : undefined,
                       border: genMode === m ? '2px solid #C41E3A' : undefined,
                       color: genMode === m ? '#C41E3A' : undefined,
@@ -507,7 +557,6 @@ export function RotaConfigPage() {
                 </div>
               </div>
             </div>
-
             <div style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '12px 14px', marginBottom: '1.5rem', fontSize: '13px' }}>
               <div style={{ fontWeight: 500, marginBottom: '6px' }}>What will be generated:</div>
               <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
@@ -517,7 +566,6 @@ export function RotaConfigPage() {
                 <div>• Closed days and non-working days skipped automatically</div>
               </div>
             </div>
-
             <button className="btn-primary" onClick={handleGenerate} disabled={generating || !config} style={{ fontSize: '14px', padding: '10px 24px' }}>
               {generating ? 'Generating…' : `Generate ${genMode === 'week' ? 'week' : 'monthly'} rota →`}
             </button>
