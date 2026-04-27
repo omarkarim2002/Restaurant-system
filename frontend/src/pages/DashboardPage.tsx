@@ -3,6 +3,8 @@ import { format, parseISO } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useSchedules, useScheduleAdvisory, useEmployees, useTimeOffRequests, useReviewTimeOff } from '../hooks/useRota';
+import { useQuery } from '@tanstack/react-query';
+import api from '../api/index';
 import { WarningsModal } from '../components/shared/WarningsModal';
 
 const AVATAR_COLORS = [
@@ -24,6 +26,15 @@ export function DashboardPage() {
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const { employee } = useAuthStore();
   const [showWarnings, setShowWarnings] = useState(false);
+
+  // Weekly wage prediction
+  const weekWageQuery = useQuery({
+    queryKey: ['wages', 'week', todayWeekStart],
+    queryFn: () => api.get(`/wages/week?week_start=${todayWeekStart}`).then(r => r.data.data),
+    enabled: !!todayWeekStart,
+    staleTime: 5 * 60 * 1000,
+  });
+  const weekWages = weekWageQuery.data;
 
   const { data: schedules = [] } = useSchedules();
   const { data: employees = [] } = useEmployees({ active: true });
@@ -78,10 +89,20 @@ export function DashboardPage() {
           </div>
           <div className="metric-sub">{totalWarnings > 0 ? 'shifts need attention' : currentSchedule ? 'all clear' : 'no schedule yet'}</div>
         </div>
-        <div className="metric-card">
-          <div className="metric-label">Hours scheduled</div>
-          <div className="metric-val" style={{ color: '#C9973A' }}>{currentSchedule ? hoursWorked : '—'}</div>
-          <div className="metric-sub">this week</div>
+        <div className="metric-card" style={{ cursor: weekWages ? 'pointer' : 'default' }} onClick={() => weekWages && (window.location.href = '/wages')}>
+          <div className="metric-label">Predicted wages{weekWages?.has_unconfirmed ? ' ⚠' : ''}</div>
+          <div className="metric-val" style={{ color: '#C9973A' }}>
+            {weekWages
+              ? `£${weekWages.total_predicted_wage.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+              : currentSchedule ? '—' : '—'}
+          </div>
+          <div className="metric-sub" style={{ color: weekWages?.has_unconfirmed ? '#8a6220' : undefined }}>
+            {weekWages
+              ? weekWages.has_unconfirmed
+                ? 'unconfirmed shifts — estimated'
+                : `${weekWages.total_predicted_hours}h scheduled`
+              : 'this week'}
+          </div>
         </div>
         <div className="metric-card">
           <div className="metric-label">Pending time off</div>

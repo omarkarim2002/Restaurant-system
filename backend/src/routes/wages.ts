@@ -1,17 +1,30 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { format, startOfWeek } from 'date-fns';
 import db from '../db/connection.js';
 import { authenticate, requireManager } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { getNationalLivingWage } from '../utils/nlwCache.js';
+import { calculateWeeklyWages } from '../utils/wageEstimator.js';
 
 const router = Router();
 
-// ── GET /wages/nlw — fetch current NLW rate (cached 30 days) ─────────────────
+// ── GET /wages/nlw ────────────────────────────────────────────────────────────
 router.get('/nlw', authenticate, async (_req, res, next) => {
   try {
     const nlw = await getNationalLivingWage();
     res.json({ data: nlw });
+  } catch (err) { next(err); }
+});
+
+// ── GET /wages/week?week_start=YYYY-MM-DD ─────────────────────────────────────
+router.get('/week', authenticate, requireManager, async (req, res, next) => {
+  try {
+    const weekStart = req.query.week_start as string
+      || format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
+
+    const wages = await calculateWeeklyWages(weekStart);
+    res.json({ data: wages });
   } catch (err) { next(err); }
 });
 
@@ -28,12 +41,11 @@ router.get('/employees', authenticate, requireManager, async (_req, res, next) =
         'r.name as role_name'
       )
       .orderBy(['e.last_name', 'e.first_name']);
-
     res.json({ data: employees });
   } catch (err) { next(err); }
 });
 
-// ── PATCH /wages/employees/:id — no rate enforcement, just save ───────────────
+// ── PATCH /wages/employees/:id ────────────────────────────────────────────────
 const WageUpdateSchema = z.object({
   hourly_rate:      z.number().min(0).max(9999).optional(),
   wage_type:        z.enum(['hourly', 'salary']).optional(),
@@ -47,7 +59,6 @@ router.patch('/employees/:id', authenticate, requireManager, async (req, res, ne
       .where({ id: req.params.id })
       .update({ ...body, updated_at: db.fn.now() })
       .returning(['id', 'first_name', 'last_name', 'hourly_rate', 'wage_type', 'contracted_hours']);
-
     if (!updated) throw new AppError('Employee not found', 404);
     res.json({ data: updated, message: 'Wage details updated.' });
   } catch (err) {
