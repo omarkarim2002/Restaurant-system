@@ -1,7 +1,8 @@
-import React from 'react';
-import { format } from 'date-fns';
+import React, { useState } from 'react';
+import { format, parseISO } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useSchedules, useScheduleAdvisory, useEmployees, useTimeOffRequests, useReviewTimeOff } from '../hooks/useRota';
+import { WarningsModal } from '../components/shared/WarningsModal';
 
 const AVATAR_COLORS = [
   { bg: '#fde8ec', text: '#9e1830' },
@@ -20,6 +21,7 @@ export function DashboardPage() {
   const today = new Date();
   const hour = today.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const [showWarnings, setShowWarnings] = useState(false);
 
   const { data: schedules = [] } = useSchedules();
   const { data: employees = [] } = useEmployees({ active: true });
@@ -39,8 +41,11 @@ export function DashboardPage() {
   );
 
   const { data: advisory } = useScheduleAdvisory(currentSchedule?.id || '');
-  const understaffed = advisory?.warnings?.filter((w: any) => w.level === 'understaffed') || [];
-  const totalWarnings = advisory?.warnings?.length || 0;
+  const warnings = advisory?.warnings || [];
+  const understaffed = warnings.filter((w: any) => w.level === 'understaffed');
+  const overstaffed = warnings.filter((w: any) => w.level === 'overstaffed');
+  const totalWarnings = warnings.length;
+
   const hoursWorked = advisory
     ? Math.round(Object.values(advisory.total_hours_by_employee as Record<string, number>).reduce((a, b) => a + b, 0))
     : 0;
@@ -49,15 +54,13 @@ export function DashboardPage() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">{greeting}, {employees.find((e: any) => true)?.first_name || 'there'}</h1>
+          <h1 className="page-title">{greeting}, {employees[0]?.first_name || 'there'}</h1>
           <p className="page-sub">
             <span className="live-dot" />
             {format(today, 'EEEE d MMMM yyyy')} — staffing overview
           </p>
         </div>
-        <button className="btn-primary" onClick={() => navigate('/rota')}>
-          View rota →
-        </button>
+        <button className="btn-primary" onClick={() => navigate('/rota')}>View rota →</button>
       </div>
 
       <div className="metric-grid">
@@ -66,8 +69,8 @@ export function DashboardPage() {
           <div className="metric-val" style={{ color: '#C41E3A' }}>{employees.length}</div>
           <div className="metric-sub">employees on record</div>
         </div>
-        <div className="metric-card">
-          <div className="metric-label">Warnings</div>
+        <div className="metric-card" style={{ cursor: totalWarnings > 0 ? 'pointer' : 'default' }} onClick={() => totalWarnings > 0 && setShowWarnings(true)}>
+          <div className="metric-label">Warnings {totalWarnings > 0 && '— click to review'}</div>
           <div className="metric-val" style={{ color: totalWarnings > 0 ? '#C41E3A' : '#27500a' }}>
             {currentSchedule ? totalWarnings : '—'}
           </div>
@@ -89,20 +92,25 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {understaffed.map((w: any, i: number) => (
-        <div key={i} className="warn-banner">
-          <div className="warn-dot">!</div>
+      {/* Umbrella warning banner */}
+      {totalWarnings > 0 && (
+        <div
+          onClick={() => setShowWarnings(true)}
+          style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '1.25rem' }}
+        >
+          <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#C41E3A', color: 'white', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>!</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830', marginBottom: '2px' }}>
-              {w.shift_name} understaffed — {w.assigned_count} {w.role_name}(s) assigned, minimum is {w.min_required}
-            </div>
-            <div style={{ fontSize: '12px', color: '#b84a5e' }}>{w.date}</div>
+            <span style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>
+              This week's rota has {totalWarnings} staffing issue{totalWarnings > 1 ? 's' : ''}
+              {understaffed.length > 0 && ` — ${understaffed.length} understaffed`}
+              {understaffed.length > 0 && overstaffed.length > 0 && ','}
+              {overstaffed.length > 0 && ` ${overstaffed.length} overstaffed`}
+            </span>
+            <span style={{ fontSize: '12px', color: '#c45a6e', marginLeft: '8px' }}>Click to see all warnings</span>
           </div>
-          <button className="btn-primary" style={{ fontSize: '12px', padding: '5px 12px' }} onClick={() => navigate('/rota')}>
-            Fix →
-          </button>
+          <span style={{ fontSize: '12px', color: '#9e1830', fontWeight: 500 }}>View all →</span>
         </div>
-      ))}
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 290px', gap: '14px' }}>
         <div>
@@ -130,7 +138,9 @@ export function DashboardPage() {
                 </p>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="btn-primary" onClick={() => navigate('/rota')}>Open rota →</button>
-                  {totalWarnings > 0 && <button onClick={() => navigate('/rota')}>Review warnings</button>}
+                  {totalWarnings > 0 && (
+                    <button onClick={() => setShowWarnings(true)}>Review warnings</button>
+                  )}
                 </div>
               </>
             )}
@@ -145,14 +155,15 @@ export function DashboardPage() {
             </div>
             {employees.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-                No staff added yet. <span style={{ color: '#C41E3A', cursor: 'pointer' }} onClick={() => navigate('/staff')}>Add your first staff member →</span>
+                No staff added yet.{' '}
+                <span style={{ color: '#C41E3A', cursor: 'pointer' }} onClick={() => navigate('/staff')}>Add your first staff member →</span>
               </p>
             ) : (
               employees.slice(0, 6).map((emp: any, i: number) => {
                 const color = AVATAR_COLORS[i % AVATAR_COLORS.length];
                 return (
                   <div key={emp.id} className="staff-row">
-                    <div className="avatar" style={{ background: color.bg, color: color.text }}>
+                    <div className="avatar" style={{ background: color.bg, color: color.text, width: '34px', height: '34px', fontSize: '12px' }}>
                       {initials(emp.first_name, emp.last_name)}
                     </div>
                     <div style={{ flex: 1 }}>
@@ -193,13 +204,9 @@ export function DashboardPage() {
                 </div>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   <button className="btn-primary" style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
-                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'approved' })}>
-                    Approve
-                  </button>
+                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'approved' })}>Approve</button>
                   <button style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
-                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'rejected' })}>
-                    Decline
-                  </button>
+                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'rejected' })}>Decline</button>
                 </div>
               </div>
             ))}
@@ -231,6 +238,8 @@ export function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {showWarnings && <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />}
     </div>
   );
 }

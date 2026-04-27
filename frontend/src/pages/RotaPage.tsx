@@ -1,7 +1,14 @@
-import React, { useState } from 'react';
-import { format, addDays, parseISO, startOfWeek, addWeeks, subWeeks } from 'date-fns';
-import { useSchedules, useSchedule, useRemoveAssignment, useScheduleAdvisory, useCreateSchedule, usePublishSchedule } from '../hooks/useRota';
+import React, { useState, useRef } from 'react';
+import { format, addDays, startOfWeek, addWeeks, subWeeks, parseISO } from 'date-fns';
+import {
+  useSchedules, useSchedule, useRemoveAssignment,
+  useScheduleAdvisory, useCreateSchedule, usePublishSchedule, useAddAssignment
+} from '../hooks/useRota';
 import { AssignShiftModal } from '../components/rota/AssignShiftModal';
+import { WarningsModal } from '../components/shared/WarningsModal';
+import { ConfirmModal } from '../components/shared/ConfirmModal';
+import { schedulesApi } from '../api/index';
+import { useQueryClient } from '@tanstack/react-query';
 
 const SHIFT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   morning:   { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
@@ -13,9 +20,21 @@ const SHIFT_COLORS: Record<string, { bg: string; text: string; border: string }>
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function RotaPage() {
+  const qc = useQueryClient();
   const [selectedWeek, setSelectedWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [addShiftDate, setAddShiftDate] = useState<string | null>(null);
-  const [showAdvisory, setShowAdvisory] = useState(false);
+  const [showWarnings, setShowWarnings] = useState(false);
+
+  // Confirm remove
+  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null);
+
+  // Drag state
+  const dragItem = useRef<any>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [confirmMove, setConfirmMove] = useState<{
+    assignmentId: string; employeeName: string; shiftName: string;
+    fromDate: string; toDate: string; scheduleId: string;
+  } | null>(null);
 
   const weekKey = format(selectedWeek, 'yyyy-MM-dd');
   const { data: schedules = [] } = useSchedules();
@@ -39,6 +58,63 @@ export function RotaPage() {
   const understaffed = warnings.filter((w: any) => w.level === 'understaffed');
   const overstaffed = warnings.filter((w: any) => w.level === 'overstaffed');
 
+  function friendlyDate(d: string) {
+    try { return format(parseISO(d), 'EEEE d MMM'); } catch { return d; }
+  }
+
+  // Drag handlers
+  function handleDragStart(e: React.DragEvent, assignment: any) {
+    dragItem.current = assignment;
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function handleDragOver(e: React.DragEvent, dateKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(dateKey);
+  }
+
+  function handleDrop(e: React.DragEvent, toDateKey: string) {
+    e.preventDefault();
+    setDragOver(null);
+    const a = dragItem.current;
+    if (!a || !currentSchedule) return;
+    const fromDate = format(new Date(a.shift_date), 'yyyy-MM-dd');
+    if (fromDate === toDateKey) return;
+
+    setConfirmMove({
+      assignmentId: a.id,
+      employeeName: `${a.first_name} ${a.last_name}`,
+      shiftName: a.shift_name,
+      fromDate,
+      toDate: toDateKey,
+      scheduleId: currentSchedule.id,
+    });
+    dragItem.current = null;
+  }
+
+  async function executeMove() {
+    if (!confirmMove) return;
+    try {
+      // Remove old assignment and create new one with the new date
+      await schedulesApi.removeAssignment(confirmMove.scheduleId, confirmMove.assignmentId);
+      const assignment = schedule?.assignments?.find((a: any) => a.id === confirmMove.assignmentId);
+      if (assignment) {
+        await schedulesApi.addAssignment(confirmMove.scheduleId, {
+          employee_id: assignment.employee_id,
+          shift_id: assignment.shift_id,
+          shift_date: confirmMove.toDate,
+        });
+      }
+      qc.invalidateQueries({ queryKey: ['schedules', confirmMove.scheduleId] });
+      qc.invalidateQueries({ queryKey: ['schedules', confirmMove.scheduleId, 'advisory'] });
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Could not move shift — there may be a conflict.');
+    } finally {
+      setConfirmMove(null);
+    }
+  }
+
   return (
     <div className="page" style={{ maxWidth: '100%' }}>
       <div className="page-header">
@@ -50,7 +126,6 @@ export function RotaPage() {
           <button onClick={() => setSelectedWeek(subWeeks(selectedWeek, 1))}>← Prev</button>
           <button onClick={() => setSelectedWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))}>This week</button>
           <button onClick={() => setSelectedWeek(addWeeks(selectedWeek, 1))}>Next →</button>
-
           {!currentSchedule && (
             <button className="btn-primary" disabled={createSchedule.isPending}
               onClick={() => createSchedule.mutate({ week_start: weekKey })}>
@@ -69,31 +144,33 @@ export function RotaPage() {
       </div>
 
       {warnings.length > 0 && (
-        <div style={{ marginBottom: '1rem' }}>
-          <div
-            onClick={() => setShowAdvisory(true)}
-            style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
-          >
-            <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#C41E3A', color: 'white', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>!</div>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>
-                {understaffed.length > 0 && `${understaffed.length} understaffed shift${understaffed.length > 1 ? 's' : ''}`}
-                {understaffed.length > 0 && overstaffed.length > 0 && ' · '}
-                {overstaffed.length > 0 && `${overstaffed.length} overstaffed shift${overstaffed.length > 1 ? 's' : ''}`}
-              </span>
-              <span style={{ fontSize: '12px', color: '#c45a6e', marginLeft: '8px' }}>Click to review all warnings</span>
-            </div>
-            <span style={{ fontSize: '12px', color: '#9e1830' }}>View →</span>
+        <div
+          onClick={() => setShowWarnings(true)}
+          style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '1rem' }}
+        >
+          <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#C41E3A', color: 'white', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>!</div>
+          <div style={{ flex: 1 }}>
+            <span style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>
+              {understaffed.length > 0 && `${understaffed.length} understaffed shift${understaffed.length > 1 ? 's' : ''}`}
+              {understaffed.length > 0 && overstaffed.length > 0 && ' · '}
+              {overstaffed.length > 0 && `${overstaffed.length} overstaffed shift${overstaffed.length > 1 ? 's' : ''}`}
+            </span>
+            <span style={{ fontSize: '12px', color: '#c45a6e', marginLeft: '8px' }}>Click to review all warnings</span>
           </div>
+          <span style={{ fontSize: '12px', color: '#9e1830', fontWeight: 500 }}>View all →</span>
+        </div>
+      )}
+
+      {currentSchedule?.status !== 'published' && (
+        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span>💡</span> Drag shift cards between days to move them. Click × to remove.
         </div>
       )}
 
       {!currentSchedule ? (
         <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>No schedule for this week.</p>
-          <button className="btn-primary" onClick={() => createSchedule.mutate({ week_start: weekKey })}>
-            Create schedule
-          </button>
+          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>No schedule for this week yet.</p>
+          <button className="btn-primary" onClick={() => createSchedule.mutate({ week_start: weekKey })}>Create schedule</button>
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -106,10 +183,7 @@ export function RotaPage() {
                   const hasWarn = warnings.some((w: any) => w.date === key);
                   return (
                     <th key={i} style={{
-                      padding: '10px 8px',
-                      textAlign: 'center',
-                      fontWeight: 500,
-                      fontSize: '13px',
+                      padding: '10px 8px', textAlign: 'center', fontWeight: 500, fontSize: '13px',
                       borderBottom: `2px solid ${isToday ? '#C41E3A' : 'var(--color-border-tertiary)'}`,
                       color: isToday ? '#C41E3A' : hasWarn ? '#9e1830' : 'var(--color-text-primary)',
                       background: isToday ? '#fde8ec' : hasWarn ? '#fff5f6' : 'transparent',
@@ -131,12 +205,38 @@ export function RotaPage() {
                   const key = format(date, 'yyyy-MM-dd');
                   const dayAssignments = assignmentsByDate[key] || [];
                   const isPublished = currentSchedule.status === 'published';
+                  const isDragTarget = dragOver === key;
+
                   return (
-                    <td key={i} style={{ verticalAlign: 'top', padding: '6px', borderRight: '0.5px solid var(--color-border-tertiary)', minWidth: '110px' }}>
+                    <td
+                      key={i}
+                      onDragOver={!isPublished ? (e) => handleDragOver(e, key) : undefined}
+                      onDragLeave={() => setDragOver(null)}
+                      onDrop={!isPublished ? (e) => handleDrop(e, key) : undefined}
+                      style={{
+                        verticalAlign: 'top', padding: '6px',
+                        borderRight: '0.5px solid var(--color-border-tertiary)',
+                        minWidth: '110px',
+                        background: isDragTarget ? '#f0f7ff' : 'transparent',
+                        outline: isDragTarget ? '2px dashed #93c5fd' : 'none',
+                        transition: 'background 0.1s',
+                        borderRadius: '4px',
+                      }}
+                    >
                       {dayAssignments.map((a: any) => {
                         const colors = SHIFT_COLORS[a.shift_type] || SHIFT_COLORS.morning;
                         return (
-                          <div key={a.id} style={{ background: colors.bg, border: `0.5px solid ${colors.border}`, borderRadius: '7px', padding: '6px 8px', marginBottom: '4px', position: 'relative' }}>
+                          <div
+                            key={a.id}
+                            draggable={!isPublished}
+                            onDragStart={!isPublished ? (e) => handleDragStart(e, a) : undefined}
+                            style={{
+                              background: colors.bg, border: `0.5px solid ${colors.border}`,
+                              borderRadius: '7px', padding: '6px 8px', marginBottom: '4px',
+                              position: 'relative', cursor: isPublished ? 'default' : 'grab',
+                              userSelect: 'none',
+                            }}
+                          >
                             <div style={{ fontWeight: 500, color: colors.text, fontSize: '12px', paddingRight: '14px' }}>
                               {a.first_name} {a.last_name}
                             </div>
@@ -146,8 +246,9 @@ export function RotaPage() {
                             </div>
                             {!isPublished && (
                               <button
-                                onClick={() => removeAssignment.mutate(a.id)}
+                                onClick={() => setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}` })}
                                 style={{ position: 'absolute', top: '4px', right: '4px', background: 'none', border: 'none', cursor: 'pointer', color: colors.text, opacity: 0.5, fontSize: '13px', padding: '1px', lineHeight: 1 }}
+                                title="Remove shift"
                               >×</button>
                             )}
                           </div>
@@ -170,55 +271,37 @@ export function RotaPage() {
         </div>
       )}
 
+      {/* Assign shift modal */}
       {addShiftDate && currentSchedule && (
-        <AssignShiftModal
-          scheduleId={currentSchedule.id}
-          date={addShiftDate}
-          onClose={() => setAddShiftDate(null)}
+        <AssignShiftModal scheduleId={currentSchedule.id} date={addShiftDate} onClose={() => setAddShiftDate(null)} />
+      )}
+
+      {/* Warnings modal */}
+      {showWarnings && <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />}
+
+      {/* Confirm remove modal */}
+      {confirmRemove && (
+        <ConfirmModal
+          title="Remove shift?"
+          message={`Are you sure you want to remove ${confirmRemove.name} from this shift? This cannot be undone.`}
+          confirmLabel="Remove"
+          cancelLabel="Keep"
+          danger
+          onConfirm={() => { removeAssignment.mutate(confirmRemove.id); setConfirmRemove(null); }}
+          onCancel={() => setConfirmRemove(null)}
         />
       )}
 
-      {showAdvisory && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: 'white', borderRadius: '16px', padding: '1.75rem', width: '500px', maxHeight: '80vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 500 }}>Staffing warnings ({warnings.length})</h3>
-              <button onClick={() => setShowAdvisory(false)} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#888', cursor: 'pointer' }}>×</button>
-            </div>
-
-            {understaffed.length > 0 && (
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontSize: '11px', fontWeight: 500, color: '#9e1830', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: '8px' }}>
-                  Understaffed ({understaffed.length})
-                </div>
-                {understaffed.map((w: any, i: number) => (
-                  <div key={i} style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 12px', marginBottom: '6px' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830', marginBottom: '2px' }}>{w.shift_name} — {w.date}</div>
-                    <div style={{ fontSize: '12px', color: '#b84a5e' }}>{w.message}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {overstaffed.length > 0 && (
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: 500, color: '#633806', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: '8px' }}>
-                  Overstaffed ({overstaffed.length})
-                </div>
-                {overstaffed.map((w: any, i: number) => (
-                  <div key={i} style={{ background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 12px', marginBottom: '6px' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#633806', marginBottom: '2px' }}>{w.shift_name} — {w.date}</div>
-                    <div style={{ fontSize: '12px', color: '#854f0b' }}>{w.message}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <button className="btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={() => setShowAdvisory(false)}>
-              Close
-            </button>
-          </div>
-        </div>
+      {/* Confirm drag-and-drop move modal */}
+      {confirmMove && (
+        <ConfirmModal
+          title="Move shift?"
+          message={`Move ${confirmMove.employeeName}'s ${confirmMove.shiftName} shift from ${friendlyDate(confirmMove.fromDate)} to ${friendlyDate(confirmMove.toDate)}?`}
+          confirmLabel="Move shift"
+          cancelLabel="Cancel"
+          onConfirm={executeMove}
+          onCancel={() => setConfirmMove(null)}
+        />
       )}
     </div>
   );
