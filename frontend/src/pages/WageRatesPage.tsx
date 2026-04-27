@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import api from '../api/index';
 import { useQuery, useMutation } from '@tanstack/react-query';
 
+const NLW_RATE_FALLBACK = 12.21;
+
 const EMPLOYMENT_TYPE_LABELS: Record<string, string> = {
   full_time: 'Full time',
   part_time: 'Part time',
@@ -25,10 +27,12 @@ function useUpdateWage() {
   });
 }
 
-const UK_MIN_WAGE = 11.44; // 2024/25 NLW rate
 
 export function WageRatesPage() {
   const { data: employees = [], isLoading } = useWageEmployees();
+  const { data: nlwData } = useNLW();
+  const NLW_RATE = nlwData?.rate ?? NLW_RATE_FALLBACK;
+  const NLW_YEAR = nlwData?.year ?? '2025';
   const updateWage = useUpdateWage();
   const [editing, setEditing] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, any>>({});
@@ -62,10 +66,7 @@ export function WageRatesPage() {
       setError('Please enter a valid hourly rate.');
       return;
     }
-    if (rate > 0 && rate < UK_MIN_WAGE) {
-      setError(`Rate £${rate.toFixed(2)} is below the UK National Living Wage (£${UK_MIN_WAGE.toFixed(2)}/hr). Please check before saving.`);
-      return;
-    }
+
 
     try {
       await updateWage.mutateAsync({
@@ -127,15 +128,15 @@ export function WageRatesPage() {
           <div className="metric-sub">based on max contracted hours</div>
         </div>
         <div className="metric-card">
-          <div className="metric-label">NLW 2024/25</div>
-          <div className="metric-val">£{UK_MIN_WAGE.toFixed(2)}</div>
-          <div className="metric-sub">minimum hourly rate</div>
+          <div className="metric-label">NLW {NLW_YEAR}/{String(parseInt(NLW_YEAR) + 1).slice(2)}</div>
+          <div className="metric-val">£{NLW_RATE.toFixed(2)}</div>
+          <div className="metric-sub">{nlwData?.source === 'gov_api' ? 'from gov.uk' : 'reference rate'}</div>
         </div>
       </div>
 
       {unsetCount > 0 && (
         <div style={{ background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 14px', marginBottom: '1.25rem', fontSize: '13px', color: '#633806' }}>
-          ⚠ {unsetCount} employee{unsetCount !== 1 ? 's' : ''} {unsetCount !== 1 ? 'have' : 'has'} no hourly rate set — their wages will show as £0.00 until updated.
+          ⚠ {unsetCount} employee{unsetCount !== 1 ? 's' : ''} {unsetCount !== 1 ? 'have' : 'has'} no hourly rate set — wages will show as £0.00 until updated.
         </div>
       )}
 
@@ -177,7 +178,7 @@ export function WageRatesPage() {
             const rate = parseFloat(emp.hourly_rate) || 0;
             const isSaved = saved === emp.id;
             const hasRate = rate > 0;
-            const belowMin = hasRate && rate < UK_MIN_WAGE;
+            const belowMin = hasRate && rate < NLW_RATE;
 
             return (
               <div
@@ -254,7 +255,7 @@ export function WageRatesPage() {
                         {hasRate ? `£${rate.toFixed(2)}` : '—'}
                       </span>
                       {belowMin && (
-                        <div style={{ fontSize: '10px', color: '#9e1830', marginTop: '1px' }}>Below NLW</div>
+                        <div style={{ fontSize: '10px', color: '#8a6220', marginTop: '1px' }}>Below NLW (note only)</div>
                       )}
                     </div>
                   )}

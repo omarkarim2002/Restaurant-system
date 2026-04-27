@@ -3,10 +3,19 @@ import { z } from 'zod';
 import db from '../db/connection.js';
 import { authenticate, requireManager } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { getNationalLivingWage } from '../utils/nlwCache.js';
 
 const router = Router();
 
-// ── GET /wages/employees — list employees with wage info ─────────────────────
+// ── GET /wages/nlw — fetch current NLW rate (cached 30 days) ─────────────────
+router.get('/nlw', authenticate, async (_req, res, next) => {
+  try {
+    const nlw = await getNationalLivingWage();
+    res.json({ data: nlw });
+  } catch (err) { next(err); }
+});
+
+// ── GET /wages/employees ──────────────────────────────────────────────────────
 router.get('/employees', authenticate, requireManager, async (_req, res, next) => {
   try {
     const employees = await db('employees as e')
@@ -24,11 +33,11 @@ router.get('/employees', authenticate, requireManager, async (_req, res, next) =
   } catch (err) { next(err); }
 });
 
-// ── PATCH /wages/employees/:id — update wage info ────────────────────────────
+// ── PATCH /wages/employees/:id — no rate enforcement, just save ───────────────
 const WageUpdateSchema = z.object({
-  hourly_rate:       z.number().min(0).max(999).optional(),
-  wage_type:         z.enum(['hourly', 'salary']).optional(),
-  contracted_hours:  z.number().int().min(1).max(60).nullable().optional(),
+  hourly_rate:      z.number().min(0).max(9999).optional(),
+  wage_type:        z.enum(['hourly', 'salary']).optional(),
+  contracted_hours: z.number().int().min(1).max(168).nullable().optional(),
 });
 
 router.patch('/employees/:id', authenticate, requireManager, async (req, res, next) => {
