@@ -27,15 +27,6 @@ export function DashboardPage() {
   const { employee } = useAuthStore();
   const [showWarnings, setShowWarnings] = useState(false);
 
-  // Weekly wage prediction
-  const weekWageQuery = useQuery({
-    queryKey: ['wages', 'week', todayWeekStart],
-    queryFn: () => api.get(`/wages/week?week_start=${todayWeekStart}`).then(r => r.data.data),
-    enabled: !!todayWeekStart,
-    staleTime: 5 * 60 * 1000,
-  });
-  const weekWages = weekWageQuery.data;
-
   const { data: schedules = [] } = useSchedules();
   const { data: employees = [] } = useEmployees({ active: true });
   const { data: timeOffRequests = [] } = useTimeOffRequests({ status: 'pending' });
@@ -52,6 +43,15 @@ export function DashboardPage() {
   const currentSchedule = schedules.find(
     (s: any) => format(new Date(s.week_start), 'yyyy-MM-dd') === todayWeekStart
   );
+
+  // Weekly wage prediction — placed after todayWeekStart is defined
+  const weekWageQuery = useQuery({
+    queryKey: ['wages', 'week', todayWeekStart],
+    queryFn: () => api.get(`/wages/week?week_start=${todayWeekStart}`).then(r => r.data.data),
+    enabled: !!todayWeekStart,
+    staleTime: 5 * 60 * 1000,
+  });
+  const weekWages = weekWageQuery.data;
 
   const { data: advisory } = useScheduleAdvisory(currentSchedule?.id || '');
   const warnings = advisory?.warnings || [];
