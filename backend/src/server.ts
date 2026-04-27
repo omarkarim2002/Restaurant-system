@@ -7,6 +7,9 @@ import rolesRouter from './routes/roles.js';
 import authRouter from './routes/auth.js';
 import employeesRouter from './routes/employees.js';
 import schedulesRouter from './routes/schedules.js';
+import rolesRouter from './routes/roles.js';
+import rolesRouter from './routes/roles.js';
+import rolesRouter from './routes/roles.js';
 import timeOffRouter from './routes/timeOff.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -44,6 +47,9 @@ const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 300 });
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/employees', apiLimiter, employeesRouter);
 app.use('/api/schedules', apiLimiter, schedulesRouter);
+app.use('/api/roles', apiLimiter, rolesRouter);
+app.use('/api/roles', apiLimiter, rolesRouter);
+app.use('/api/roles', apiLimiter, rolesRouter);
 app.use('/api/time-off', apiLimiter, timeOffRouter);
 app.use('/api/roles', apiLimiter, rolesRouter);
 
