@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthStore } from './store/authStore';
 import { RotaPage } from './pages/RotaPage';
+import { DashboardPage } from './pages/DashboardPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,21 +25,15 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/rota"
-            element={<ProtectedRoute><RotaPage /></ProtectedRoute>}
-          />
-          {/* Phase 2: <Route path="/bookings" element={<ProtectedRoute><BookingsPage /></ProtectedRoute>} /> */}
-          {/* Phase 3: <Route path="/inventory" element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} /> */}
-          {/* Phase 4: <Route path="/ai" element={<ProtectedRoute><AIDashboard /></ProtectedRoute>} /> */}
-          <Route path="*" element={<Navigate to="/rota" replace />} />
+          <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/rota" element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   );
 }
 
-// Minimal login page — replace with a proper component
 function LoginPage() {
   const login = useAuthStore((s) => s.login);
   const [email, setEmail] = React.useState('');
@@ -51,7 +46,7 @@ function LoginPage() {
       const { default: api } = await import('./api/index');
       const res = await api.post('/auth/login', { email, password });
       login(res.data.data.token, res.data.data.employee);
-      window.location.href = '/rota';
+      window.location.href = '/';
     } catch {
       setError('Invalid credentials');
     }
