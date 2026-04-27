@@ -9,6 +9,7 @@ import employeesRouter from './routes/employees.js';
 import schedulesRouter from './routes/schedules.js';
 import timeOffRouter from './routes/timeOff.js';
 import rolesRouter from './routes/roles.js';
+import rotaConfigRouter from './routes/rotaConfig.js';
 import shiftsRouter from './routes/shifts.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -41,6 +42,7 @@ app.use('/api/employees', apiLimiter, employeesRouter);
 app.use('/api/schedules', apiLimiter, schedulesRouter);
 app.use('/api/time-off', apiLimiter, timeOffRouter);
 app.use('/api/roles', apiLimiter, rolesRouter);
+app.use('/api/rota-config', apiLimiter, rotaConfigRouter);
 app.use('/api/shifts', apiLimiter, shiftsRouter);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));

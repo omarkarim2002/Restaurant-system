@@ -5,6 +5,7 @@ import { useAuthStore } from './store/authStore';
 import { Layout } from './components/Layout';
 import { DashboardPage } from './pages/DashboardPage';
 import { RotaPage } from './pages/RotaPage';
+import { RotaConfigPage } from './pages/RotaConfigPage';
 import { StaffPage } from './pages/StaffPage';
 import { TimeOffPage } from './pages/TimeOffPage';
 
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/rota" element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
+          <Route path="/rota-config" element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
           <Route path="/staff" element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
           <Route path="/time-off" element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -73,11 +75,7 @@ function LoginPage() {
         </div>
         <h2 style={{ fontSize: '20px', fontWeight: 500, marginBottom: '0.4rem' }}>Sign in</h2>
         <p style={{ fontSize: '13px', color: '#5f5e5a', marginBottom: '1.5rem' }}>Enter your credentials to continue</p>
-        {error && (
-          <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>
-            {error}
-          </div>
-        )}
+        {error && <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>{error}</div>}
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '0.75rem' }}>
             <label style={{ fontSize: '12px', fontWeight: 500, color: '#5f5e5a', display: 'block', marginBottom: '5px' }}>Email</label>
