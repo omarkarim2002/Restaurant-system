@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { format, addDays, startOfWeek, addWeeks, subWeeks, parseISO } from 'date-fns';
 import {
   useSchedules, useSchedule, useRemoveAssignment,
-  useScheduleAdvisory, useCreateSchedule, usePublishSchedule, useAddAssignment
+  useScheduleAdvisory, useCreateSchedule, usePublishSchedule
 } from '../hooks/useRota';
 import { AssignShiftModal } from '../components/rota/AssignShiftModal';
 import { WarningsModal } from '../components/shared/WarningsModal';
@@ -19,29 +19,39 @@ const SHIFT_COLORS: Record<string, { bg: string; text: string; border: string }>
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function friendlyDate(d: string) {
+  try { return format(parseISO(d), 'EEEE d MMM'); } catch { return d; }
+}
+
 export function RotaPage() {
   const qc = useQueryClient();
   const [selectedWeek, setSelectedWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [addShiftDate, setAddShiftDate] = useState<string | null>(null);
   const [showWarnings, setShowWarnings] = useState(false);
-
-  // Confirm remove
-  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null);
-
-  // Drag state
-  const dragItem = useRef<any>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string; shiftName: string; date: string } | null>(null);
   const [confirmMove, setConfirmMove] = useState<{
-    assignmentId: string; employeeName: string; shiftName: string;
-    fromDate: string; toDate: string; scheduleId: string;
+    assignmentId: string;
+    employeeName: string;
+    shiftName: string;
+    fromDate: string;
+    toDate: string;
+    scheduleId: string;
+    employeeId: string;
+    shiftId: string;
   } | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const dragItem = useRef<any>(null);
+  const [moving, setMoving] = useState(false);
 
   const weekKey = format(selectedWeek, 'yyyy-MM-dd');
   const { data: schedules = [] } = useSchedules();
   const createSchedule = useCreateSchedule();
   const publishSchedule = usePublishSchedule();
 
-  const currentSchedule = schedules.find((s: any) => format(new Date(s.week_start), 'yyyy-MM-dd') === weekKey);
+  const currentSchedule = schedules.find(
+    (s: any) => format(new Date(s.week_start), 'yyyy-MM-dd') === weekKey
+  );
+
   const { data: schedule } = useSchedule(currentSchedule?.id || '');
   const { data: advisory } = useScheduleAdvisory(currentSchedule?.id || '');
   const removeAssignment = useRemoveAssignment(currentSchedule?.id || '');
@@ -58,20 +68,38 @@ export function RotaPage() {
   const understaffed = warnings.filter((w: any) => w.level === 'understaffed');
   const overstaffed = warnings.filter((w: any) => w.level === 'overstaffed');
 
-  function friendlyDate(d: string) {
-    try { return format(parseISO(d), 'EEEE d MMM'); } catch { return d; }
-  }
-
-  // Drag handlers
+  // ── Drag handlers ────────────────────────────────────────────────────────────
   function handleDragStart(e: React.DragEvent, assignment: any) {
     dragItem.current = assignment;
     e.dataTransfer.effectAllowed = 'move';
+    // Add ghost image opacity
+    if (e.currentTarget instanceof HTMLElement) {
+      setTimeout(() => {
+        if (e.currentTarget instanceof HTMLElement) {
+          e.currentTarget.style.opacity = '0.4';
+        }
+      }, 0);
+    }
+  }
+
+  function handleDragEnd(e: React.DragEvent) {
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = '1';
+    }
+    setDragOver(null);
   }
 
   function handleDragOver(e: React.DragEvent, dateKey: string) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOver(dateKey);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    // Only clear if leaving the cell entirely (not entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOver(null);
+    }
   }
 
   function handleDrop(e: React.DragEvent, toDateKey: string) {
@@ -89,34 +117,37 @@ export function RotaPage() {
       fromDate,
       toDate: toDateKey,
       scheduleId: currentSchedule.id,
+      employeeId: a.employee_id,
+      shiftId: a.shift_id,
     });
     dragItem.current = null;
   }
 
   async function executeMove() {
     if (!confirmMove) return;
+    setMoving(true);
     try {
-      // Remove old assignment and create new one with the new date
       await schedulesApi.removeAssignment(confirmMove.scheduleId, confirmMove.assignmentId);
-      const assignment = schedule?.assignments?.find((a: any) => a.id === confirmMove.assignmentId);
-      if (assignment) {
-        await schedulesApi.addAssignment(confirmMove.scheduleId, {
-          employee_id: assignment.employee_id,
-          shift_id: assignment.shift_id,
-          shift_date: confirmMove.toDate,
-        });
-      }
+      await schedulesApi.addAssignment(confirmMove.scheduleId, {
+        employee_id: confirmMove.employeeId,
+        shift_id: confirmMove.shiftId,
+        shift_date: confirmMove.toDate,
+      });
       qc.invalidateQueries({ queryKey: ['schedules', confirmMove.scheduleId] });
       qc.invalidateQueries({ queryKey: ['schedules', confirmMove.scheduleId, 'advisory'] });
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Could not move shift — there may be a conflict.');
+      alert(err.response?.data?.error || 'Could not move shift — there may be a scheduling conflict.');
     } finally {
+      setMoving(false);
       setConfirmMove(null);
     }
   }
 
+  const isPublished = currentSchedule?.status === 'published';
+
   return (
     <div className="page" style={{ maxWidth: '100%' }}>
+      {/* Header */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Rota</h1>
@@ -137,12 +168,11 @@ export function RotaPage() {
               Publish schedule
             </button>
           )}
-          {currentSchedule?.status === 'published' && (
-            <span className="badge badge-green">Published</span>
-          )}
+          {isPublished && <span className="badge badge-green">Published</span>}
         </div>
       </div>
 
+      {/* Umbrella warning banner */}
       {warnings.length > 0 && (
         <div
           onClick={() => setShowWarnings(true)}
@@ -161,12 +191,14 @@ export function RotaPage() {
         </div>
       )}
 
-      {currentSchedule?.status !== 'published' && (
-        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span>💡</span> Drag shift cards between days to move them. Click × to remove.
+      {/* Drag hint */}
+      {!isPublished && currentSchedule && (
+        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '0.75rem' }}>
+          💡 Drag shift cards between days to move them · Click × to remove
         </div>
       )}
 
+      {/* No schedule state */}
       {!currentSchedule ? (
         <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
           <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>No schedule for this week yet.</p>
@@ -204,23 +236,25 @@ export function RotaPage() {
                 {weekDates.map((date, i) => {
                   const key = format(date, 'yyyy-MM-dd');
                   const dayAssignments = assignmentsByDate[key] || [];
-                  const isPublished = currentSchedule.status === 'published';
                   const isDragTarget = dragOver === key;
 
                   return (
                     <td
                       key={i}
                       onDragOver={!isPublished ? (e) => handleDragOver(e, key) : undefined}
-                      onDragLeave={() => setDragOver(null)}
+                      onDragLeave={!isPublished ? handleDragLeave : undefined}
                       onDrop={!isPublished ? (e) => handleDrop(e, key) : undefined}
                       style={{
-                        verticalAlign: 'top', padding: '6px',
+                        verticalAlign: 'top',
+                        padding: '6px',
                         borderRight: '0.5px solid var(--color-border-tertiary)',
                         minWidth: '110px',
-                        background: isDragTarget ? '#f0f7ff' : 'transparent',
+                        minHeight: '80px',
+                        background: isDragTarget ? '#eef6ff' : 'transparent',
                         outline: isDragTarget ? '2px dashed #93c5fd' : 'none',
-                        transition: 'background 0.1s',
+                        outlineOffset: '-2px',
                         borderRadius: '4px',
+                        transition: 'background 0.1s, outline 0.1s',
                       }}
                     >
                       {dayAssignments.map((a: any) => {
@@ -230,14 +264,20 @@ export function RotaPage() {
                             key={a.id}
                             draggable={!isPublished}
                             onDragStart={!isPublished ? (e) => handleDragStart(e, a) : undefined}
+                            onDragEnd={!isPublished ? handleDragEnd : undefined}
                             style={{
-                              background: colors.bg, border: `0.5px solid ${colors.border}`,
-                              borderRadius: '7px', padding: '6px 8px', marginBottom: '4px',
-                              position: 'relative', cursor: isPublished ? 'default' : 'grab',
+                              background: colors.bg,
+                              border: `0.5px solid ${colors.border}`,
+                              borderRadius: '7px',
+                              padding: '6px 8px',
+                              marginBottom: '4px',
+                              position: 'relative',
+                              cursor: isPublished ? 'default' : 'grab',
                               userSelect: 'none',
+                              transition: 'opacity 0.15s',
                             }}
                           >
-                            <div style={{ fontWeight: 500, color: colors.text, fontSize: '12px', paddingRight: '14px' }}>
+                            <div style={{ fontWeight: 500, color: colors.text, fontSize: '12px', paddingRight: '16px' }}>
                               {a.first_name} {a.last_name}
                             </div>
                             <div style={{ fontSize: '11px', color: colors.text, opacity: 0.8 }}>{a.role_name}</div>
@@ -246,8 +286,21 @@ export function RotaPage() {
                             </div>
                             {!isPublished && (
                               <button
-                                onClick={() => setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}` })}
-                                style={{ position: 'absolute', top: '4px', right: '4px', background: 'none', border: 'none', cursor: 'pointer', color: colors.text, opacity: 0.5, fontSize: '13px', padding: '1px', lineHeight: 1 }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmRemove({
+                                    id: a.id,
+                                    name: `${a.first_name} ${a.last_name}`,
+                                    shiftName: a.shift_name,
+                                    date: format(new Date(a.shift_date), 'EEEE d MMM'),
+                                  });
+                                }}
+                                style={{
+                                  position: 'absolute', top: '4px', right: '5px',
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  color: colors.text, opacity: 0.55, fontSize: '14px',
+                                  padding: '0', lineHeight: 1, fontWeight: 400,
+                                }}
                                 title="Remove shift"
                               >×</button>
                             )}
@@ -257,7 +310,12 @@ export function RotaPage() {
                       {!isPublished && (
                         <button
                           onClick={() => setAddShiftDate(key)}
-                          style={{ width: '100%', marginTop: '2px', padding: '5px', fontSize: '11px', cursor: 'pointer', background: 'transparent', border: '0.5px dashed var(--color-border-secondary)', borderRadius: '6px', color: 'var(--color-text-tertiary)' }}
+                          style={{
+                            width: '100%', marginTop: '2px', padding: '5px', fontSize: '11px',
+                            cursor: 'pointer', background: 'transparent',
+                            border: '0.5px dashed var(--color-border-secondary)',
+                            borderRadius: '6px', color: 'var(--color-text-tertiary)',
+                          }}
                         >
                           + Add
                         </button>
@@ -273,31 +331,40 @@ export function RotaPage() {
 
       {/* Assign shift modal */}
       {addShiftDate && currentSchedule && (
-        <AssignShiftModal scheduleId={currentSchedule.id} date={addShiftDate} onClose={() => setAddShiftDate(null)} />
+        <AssignShiftModal
+          scheduleId={currentSchedule.id}
+          date={addShiftDate}
+          onClose={() => setAddShiftDate(null)}
+        />
       )}
 
       {/* Warnings modal */}
-      {showWarnings && <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />}
+      {showWarnings && (
+        <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />
+      )}
 
       {/* Confirm remove modal */}
       {confirmRemove && (
         <ConfirmModal
-          title="Remove shift?"
-          message={`Are you sure you want to remove ${confirmRemove.name} from this shift? This cannot be undone.`}
-          confirmLabel="Remove"
+          title="Remove this shift?"
+          message={`Remove ${confirmRemove.name} from the ${confirmRemove.shiftName} shift on ${confirmRemove.date}? This cannot be undone.`}
+          confirmLabel="Remove shift"
           cancelLabel="Keep"
           danger
-          onConfirm={() => { removeAssignment.mutate(confirmRemove.id); setConfirmRemove(null); }}
+          onConfirm={() => {
+            removeAssignment.mutate(confirmRemove.id);
+            setConfirmRemove(null);
+          }}
           onCancel={() => setConfirmRemove(null)}
         />
       )}
 
-      {/* Confirm drag-and-drop move modal */}
+      {/* Confirm drag move modal */}
       {confirmMove && (
         <ConfirmModal
-          title="Move shift?"
-          message={`Move ${confirmMove.employeeName}'s ${confirmMove.shiftName} shift from ${friendlyDate(confirmMove.fromDate)} to ${friendlyDate(confirmMove.toDate)}?`}
-          confirmLabel="Move shift"
+          title="Move this shift?"
+          message={`Move ${confirmMove.employeeName}'s ${confirmMove.shiftName} from ${friendlyDate(confirmMove.fromDate)} to ${friendlyDate(confirmMove.toDate)}?`}
+          confirmLabel={moving ? 'Moving…' : 'Yes, move shift'}
           cancelLabel="Cancel"
           onConfirm={executeMove}
           onCancel={() => setConfirmMove(null)}

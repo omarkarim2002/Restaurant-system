@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { useSchedules, useScheduleAdvisory, useEmployees, useTimeOffRequests, useReviewTimeOff } from '../hooks/useRota';
 import { WarningsModal } from '../components/shared/WarningsModal';
@@ -63,18 +63,25 @@ export function DashboardPage() {
         <button className="btn-primary" onClick={() => navigate('/rota')}>View rota →</button>
       </div>
 
+      {/* Metric cards */}
       <div className="metric-grid">
         <div className="metric-card">
           <div className="metric-label">Staff active</div>
           <div className="metric-val" style={{ color: '#C41E3A' }}>{employees.length}</div>
           <div className="metric-sub">employees on record</div>
         </div>
-        <div className="metric-card" style={{ cursor: totalWarnings > 0 ? 'pointer' : 'default' }} onClick={() => totalWarnings > 0 && setShowWarnings(true)}>
-          <div className="metric-label">Warnings {totalWarnings > 0 && '— click to review'}</div>
+        <div
+          className="metric-card"
+          style={{ cursor: totalWarnings > 0 ? 'pointer' : 'default' }}
+          onClick={() => totalWarnings > 0 && setShowWarnings(true)}
+        >
+          <div className="metric-label">Warnings{totalWarnings > 0 ? ' — click to review' : ''}</div>
           <div className="metric-val" style={{ color: totalWarnings > 0 ? '#C41E3A' : '#27500a' }}>
             {currentSchedule ? totalWarnings : '—'}
           </div>
-          <div className="metric-sub">{totalWarnings > 0 ? 'shifts need attention' : currentSchedule ? 'all clear' : 'no schedule yet'}</div>
+          <div className="metric-sub">
+            {totalWarnings > 0 ? 'shifts need attention' : currentSchedule ? 'all clear' : 'no schedule yet'}
+          </div>
         </div>
         <div className="metric-card">
           <div className="metric-label">Hours scheduled</div>
@@ -92,21 +99,25 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Umbrella warning banner */}
+      {/* Umbrella warning banner — click to open modal */}
       {totalWarnings > 0 && (
         <div
           onClick={() => setShowWarnings(true)}
-          style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '1.25rem' }}
+          style={{
+            background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px',
+            padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px',
+            cursor: 'pointer', marginBottom: '1.25rem',
+          }}
         >
           <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#C41E3A', color: 'white', fontSize: '12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>!</div>
           <div style={{ flex: 1 }}>
             <span style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>
-              This week's rota has {totalWarnings} staffing issue{totalWarnings > 1 ? 's' : ''}
+              This week has {totalWarnings} staffing issue{totalWarnings > 1 ? 's' : ''}
               {understaffed.length > 0 && ` — ${understaffed.length} understaffed`}
               {understaffed.length > 0 && overstaffed.length > 0 && ','}
               {overstaffed.length > 0 && ` ${overstaffed.length} overstaffed`}
             </span>
-            <span style={{ fontSize: '12px', color: '#c45a6e', marginLeft: '8px' }}>Click to see all warnings</span>
+            <span style={{ fontSize: '12px', color: '#c45a6e', marginLeft: '8px' }}>Click to see details</span>
           </div>
           <span style={{ fontSize: '12px', color: '#9e1830', fontWeight: 500 }}>View all →</span>
         </div>
@@ -114,6 +125,7 @@ export function DashboardPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 290px', gap: '14px' }}>
         <div>
+          {/* Schedule card */}
           <div className="card" style={{ marginBottom: '14px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h3>This week's schedule</h3>
@@ -134,7 +146,9 @@ export function DashboardPage() {
               <>
                 <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>
                   Week of {format(new Date(currentSchedule.week_start), 'dd MMMM yyyy')}
-                  {totalWarnings > 0 && <span style={{ color: '#C41E3A' }}> · {totalWarnings} warning{totalWarnings > 1 ? 's' : ''}</span>}
+                  {totalWarnings > 0 && (
+                    <span style={{ color: '#C41E3A' }}> · {totalWarnings} warning{totalWarnings > 1 ? 's' : ''}</span>
+                  )}
                 </p>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="btn-primary" onClick={() => navigate('/rota')}>Open rota →</button>
@@ -146,6 +160,7 @@ export function DashboardPage() {
             )}
           </div>
 
+          {/* Staff card */}
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h3>Active staff</h3>
@@ -156,7 +171,9 @@ export function DashboardPage() {
             {employees.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
                 No staff added yet.{' '}
-                <span style={{ color: '#C41E3A', cursor: 'pointer' }} onClick={() => navigate('/staff')}>Add your first staff member →</span>
+                <span style={{ color: '#C41E3A', cursor: 'pointer' }} onClick={() => navigate('/staff')}>
+                  Add your first staff member →
+                </span>
               </p>
             ) : (
               employees.slice(0, 6).map((emp: any, i: number) => {
@@ -188,36 +205,44 @@ export function DashboardPage() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Time off */}
           <div className="card">
             <h3 style={{ marginBottom: '1rem' }}>Pending time off</h3>
             {timeOffRequests.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>No pending requests.</p>
-            ) : timeOffRequests.map((req: any) => (
-              <div key={req.id} style={{ padding: '10px', background: 'var(--color-background-secondary)', borderRadius: '8px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>{req.first_name} {req.last_name}</div>
-                  <span className="badge badge-gold">Pending</span>
+            ) : (
+              timeOffRequests.map((req: any) => (
+                <div key={req.id} style={{ padding: '10px', background: 'var(--color-background-secondary)', borderRadius: '8px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{req.first_name} {req.last_name}</div>
+                    <span className="badge badge-gold">Pending</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                    {req.request_type} · {format(new Date(req.start_date), 'dd MMM')}
+                    {req.start_date !== req.end_date && ` – ${format(new Date(req.end_date), 'dd MMM')}`}
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button className="btn-primary" style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
+                      onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'approved' })}>
+                      Approve
+                    </button>
+                    <button style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
+                      onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'rejected' })}>
+                      Decline
+                    </button>
+                  </div>
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
-                  {req.request_type} · {format(new Date(req.start_date), 'dd MMM')}
-                  {req.start_date !== req.end_date && ` – ${format(new Date(req.end_date), 'dd MMM')}`}
-                </div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="btn-primary" style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
-                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'approved' })}>Approve</button>
-                  <button style={{ flex: 1, padding: '5px 0', fontSize: '12px' }}
-                    onClick={() => reviewTimeOff.mutate({ id: req.id, status: 'rejected' })}>Decline</button>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
 
+          {/* Quick actions */}
           <div className="card">
             <h3 style={{ marginBottom: '1rem' }}>Quick actions</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {[
                 { label: '+ Add staff member', action: () => navigate('/staff') },
-                { label: '+ Create next week\'s rota', action: () => navigate('/rota') },
+                { label: "+ Create next week's rota", action: () => navigate('/rota') },
                 { label: 'Review time off requests', action: () => navigate('/time-off') },
               ].map(({ label, action }) => (
                 <button key={label} onClick={action} style={{ textAlign: 'left', padding: '8px 12px', fontSize: '13px' }}>
@@ -227,6 +252,7 @@ export function DashboardPage() {
             </div>
           </div>
 
+          {/* Roadmap */}
           <div className="card" style={{ borderLeft: '3px solid #C41E3A', borderRadius: '0 12px 12px 0' }}>
             <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', lineHeight: 1.8 }}>
               <div style={{ fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '4px', fontSize: '12px' }}>Roadmap</div>
@@ -239,6 +265,7 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Warnings modal */}
       {showWarnings && <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />}
     </div>
   );
