@@ -9,7 +9,6 @@ import { calculateWeeklyWages } from '../utils/wageEstimator.js';
 
 const router = Router();
 
-// ── GET /wages/nlw ────────────────────────────────────────────────────────────
 router.get('/nlw', authenticate, async (_req, res, next) => {
   try {
     const nlw = await getNationalLivingWage();
@@ -17,18 +16,15 @@ router.get('/nlw', authenticate, async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── GET /wages/week?week_start=YYYY-MM-DD ─────────────────────────────────────
 router.get('/week', authenticate, requireManager, async (req, res, next) => {
   try {
     const weekStart = req.query.week_start as string
       || format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
-
     const wages = await calculateWeeklyWages(weekStart);
     res.json({ data: wages });
   } catch (err) { next(err); }
 });
 
-// ── GET /wages/employees ──────────────────────────────────────────────────────
 router.get('/employees', authenticate, requireManager, async (_req, res, next) => {
   try {
     const employees = await db('employees as e')
@@ -37,7 +33,8 @@ router.get('/employees', authenticate, requireManager, async (_req, res, next) =
       .select(
         'e.id', 'e.first_name', 'e.last_name', 'e.email',
         'e.employment_type', 'e.wage_type', 'e.hourly_rate',
-        'e.contracted_hours', 'e.max_hours_per_week', 'e.off_rota',
+        'e.contracted_hours', 'e.max_hours_per_week',
+        'e.enforce_contracted_hours', 'e.off_rota',
         'r.name as role_name'
       )
       .orderBy(['e.last_name', 'e.first_name']);
@@ -45,11 +42,11 @@ router.get('/employees', authenticate, requireManager, async (_req, res, next) =
   } catch (err) { next(err); }
 });
 
-// ── PATCH /wages/employees/:id ────────────────────────────────────────────────
 const WageUpdateSchema = z.object({
-  hourly_rate:      z.number().min(0).max(9999).optional(),
-  wage_type:        z.enum(['hourly', 'salary']).optional(),
-  contracted_hours: z.number().int().min(1).max(168).nullable().optional(),
+  hourly_rate:               z.number().min(0).max(9999).optional(),
+  wage_type:                 z.enum(['hourly', 'salary']).optional(),
+  contracted_hours:          z.number().int().min(1).max(168).nullable().optional(),
+  enforce_contracted_hours:  z.boolean().optional(),
 });
 
 router.patch('/employees/:id', authenticate, requireManager, async (req, res, next) => {
@@ -58,7 +55,10 @@ router.patch('/employees/:id', authenticate, requireManager, async (req, res, ne
     const [updated] = await db('employees')
       .where({ id: req.params.id })
       .update({ ...body, updated_at: db.fn.now() })
-      .returning(['id', 'first_name', 'last_name', 'hourly_rate', 'wage_type', 'contracted_hours']);
+      .returning([
+        'id', 'first_name', 'last_name', 'hourly_rate',
+        'wage_type', 'contracted_hours', 'enforce_contracted_hours'
+      ]);
     if (!updated) throw new AppError('Employee not found', 404);
     res.json({ data: updated, message: 'Wage details updated.' });
   } catch (err) {

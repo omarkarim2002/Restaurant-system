@@ -23,10 +23,8 @@ router.get('/', authenticate, async (_req, res, next) => {
 
 // ── POST /rota-config ────────────────────────────────────────────────────────
 const SectionSchema = z.object({
-  name: z.string().min(1),
-  role_id: z.string().uuid().optional().nullable(),
-  min_staff: z.number().int().min(1),
-  max_staff: z.number().int().min(1),
+  name: z.string().min(1), role_id: z.string().uuid().optional().nullable(),
+  min_staff: z.number().int().min(1), max_staff: z.number().int().min(1),
   sort_order: z.number().int().optional(),
   shift_start_1: z.string(), shift_end_1: z.string().optional().nullable(),
   shift_start_2: z.string().optional().nullable(), shift_end_2: z.string().optional().nullable(),
@@ -34,14 +32,10 @@ const SectionSchema = z.object({
   shift_start_4: z.string().optional().nullable(), shift_end_4: z.string().optional().nullable(),
   shift_start_5: z.string().optional().nullable(), shift_end_5: z.string().optional().nullable(),
 });
-
 const DaySchema = z.object({
   day_of_week: z.number().int().min(0).max(6),
-  open_time: z.string(),
-  close_time: z.string(),
-  is_open: z.boolean(),
+  open_time: z.string(), close_time: z.string(), is_open: z.boolean(),
 });
-
 const ConfigSchema = z.object({
   name: z.string().min(1).optional(),
   working_days: z.array(z.number().int().min(0).max(6)),
@@ -56,9 +50,7 @@ router.post('/', authenticate, requireManager, async (req, res, next) => {
       await trx('rota_config').update({ is_active: false });
       const [config] = await trx('rota_config').insert({
         name: body.name || 'Default Config',
-        working_days: body.working_days,
-        is_active: true,
-        created_by: req.user!.sub,
+        working_days: body.working_days, is_active: true, created_by: req.user!.sub,
       }).returning('*');
       if (body.days.length > 0) await trx('rota_config_days').insert(body.days.map(d => ({ ...d, config_id: config.id })));
       if (body.sections.length > 0) await trx('rota_sections').insert(body.sections.map((s, i) => ({ ...s, config_id: config.id, sort_order: s.sort_order ?? i })));
@@ -83,7 +75,6 @@ router.get('/closed-days', authenticate, async (req, res, next) => {
     res.json({ data: await query });
   } catch (err) { next(err); }
 });
-
 router.post('/closed-days', authenticate, requireManager, async (req, res, next) => {
   try {
     const { closed_date, reason } = req.body;
@@ -92,7 +83,6 @@ router.post('/closed-days', authenticate, requireManager, async (req, res, next)
     res.status(201).json({ data: row });
   } catch (err) { next(err); }
 });
-
 router.delete('/closed-days/:date', authenticate, requireManager, async (req, res, next) => {
   try {
     await db('closed_days').where({ closed_date: req.params.date }).delete();
@@ -109,9 +99,6 @@ const GenerateSchema = z.object({
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
-/**
- * Get shift slots from a section row (shift_start_1..5)
- */
 function getSectionShifts(section: any): { start: string; end: string | null; slot: number }[] {
   const slots = [];
   for (let i = 1; i <= 5; i++) {
@@ -122,41 +109,44 @@ function getSectionShifts(section: any): { start: string; end: string | null; sl
   return slots;
 }
 
-/**
- * Parse "HH:MM" into minutes since midnight
- */
 function toMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
 }
 
 /**
- * Calculate shift duration in hours
+ * Calculate shift hours.
+ * If no end time, uses UPPER BOUNDARY logic:
+ *   - For contracted hours enforcement: uses the restaurant's close time as worst case
+ *   - This ensures employees still get considered for shifts but hours budget is protected
  */
-function shiftHours(start: string, end: string | null): number {
-  if (!end) return 8; // default assumption if no end time
-  const s = toMinutes(start);
-  let e = toMinutes(end);
-  if (e < s) e += 24 * 60; // crosses midnight
-  return (e - s) / 60;
+function shiftHours(start: string, end: string | null, closeTime?: string | null): number {
+  if (end) {
+    const s = toMinutes(start);
+    let e = toMinutes(end);
+    if (e < s) e += 24 * 60;
+    return (e - s) / 60;
+  }
+  // No end time — use upper boundary
+  if (closeTime) {
+    const s = toMinutes(start);
+    let e = toMinutes(closeTime);
+    if (e < s) e += 24 * 60;
+    // Add 30 min buffer for closing duties
+    return Math.min((e - s) / 60 + 0.5, 12);
+  }
+  // Ultimate fallback
+  return 8;
 }
 
-/**
- * Find the best matching shift template from the DB for a given start/end
- */
 function findShiftTemplate(shifts: any[], start: string, end: string | null): any | null {
-  // Exact match first
   const exact = shifts.find(s => {
     const sStart = s.start_time?.slice(0, 5);
-    const sEnd = s.end_time?.slice(0, 5);
     if (sStart !== start) return false;
     if (!end) return true;
-    return sEnd === end;
+    return s.end_time?.slice(0, 5) === end;
   });
-  if (exact) return exact;
-
-  // Fallback: match by start time only
-  return shifts.find(s => s.start_time?.slice(0, 5) === start) ?? null;
+  return exact ?? shifts.find(s => s.start_time?.slice(0, 5) === start) ?? null;
 }
 
 router.post('/generate', authenticate, requireManager, async (req: Request, res: Response, next: NextFunction) => {
@@ -169,16 +159,20 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
     const sections = await db('rota_sections').where({ config_id: config.id }).orderBy('sort_order');
     if (!sections.length) throw new AppError('No sections configured. Add at least one section.', 400);
 
-    // Load all active employees with role info
+    // Load employees with contracted hours enforcement flag
     const employees = await db('employees as e')
       .join('roles as r', 'e.role_id', 'r.id')
       .where('e.is_active', true)
       .where('e.off_rota', false)
-      .select('e.id', 'e.first_name', 'e.last_name', 'e.role_id', 'e.max_hours_per_week', 'e.employment_type', 'r.name as role_name');
+      .select(
+        'e.id', 'e.first_name', 'e.last_name', 'e.role_id',
+        'e.max_hours_per_week', 'e.contracted_hours',
+        'e.enforce_contracted_hours', 'e.employment_type',
+        'r.name as role_name'
+      );
 
     if (!employees.length) throw new AppError('No active employees found.', 400);
 
-    // Build date range
     const startDate = new Date(start_date + 'T12:00:00Z');
     const endDate = new Date(start_date + 'T12:00:00Z');
     endDate.setDate(endDate.getDate() + (mode === 'week' ? 6 : 29));
@@ -191,7 +185,12 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
     const workingDays: number[] = config.working_days;
     const allShiftTemplates = await db('shifts').where({ is_active: true }).select('*');
 
-    // Collect all Mondays in range
+    // Build the day configs map for close times
+    const dayConfigs = await db('rota_config_days').where({ config_id: config.id });
+    const closeTimeByDow: Record<number, string> = {};
+    for (const dc of dayConfigs) closeTimeByDow[dc.day_of_week] = dc.close_time;
+
+    // Collect Mondays
     const mondays: string[] = [];
     const cur = new Date(startDate);
     const dow = cur.getDay();
@@ -201,12 +200,7 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
       cur.setDate(cur.getDate() + 7);
     }
 
-    // ── Weekly hours tracking (reset per week) ────────────────────────────────
-    // empWeeklyHours[weekKey][empId] = hours assigned so far this week
     const empWeeklyHours: Record<string, Record<string, number>> = {};
-
-    // ── Rotation counter: track how many times each employee was assigned ─────
-    // Used to distribute fairly across the period
     const empTotalAssignments: Record<string, number> = {};
     for (const e of employees) empTotalAssignments[e.id] = 0;
 
@@ -223,27 +217,25 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
         let schedule = await trx('schedules').where({ week_start: weekStart }).first();
         if (!schedule) {
           [schedule] = await trx('schedules').insert({
-            week_start: weekStart,
-            status: 'draft',
-            created_by: req.user!.sub,
-            notes: `Auto-generated (${mode})`,
+            week_start: weekStart, status: 'draft',
+            created_by: req.user!.sub, notes: `Auto-generated (${mode})`,
           }).returning('*');
         }
 
         let assignmentCount = 0;
         const skippedStaff: { name: string; date: string; reason: string }[] = [];
 
-        // For each day Mon→Sun
         for (let d = 0; d < 7; d++) {
           const date = new Date(weekStart + 'T12:00:00Z');
           date.setUTCDate(date.getUTCDate() + d);
           const dateStr = date.toISOString().split('T')[0];
-          const dayOfWeek = date.getUTCDay(); // 0=Sun
+          const dayOfWeek = date.getUTCDay();
 
           if (!workingDays.includes(dayOfWeek)) continue;
           if (closedDates.has(dateStr)) continue;
 
-          // Already-assigned employee IDs today (across all sections)
+          const dayCloseTime = closeTimeByDow[dayOfWeek] || null;
+
           const alreadyToday = new Set<string>(
             (await trx('shift_assignments')
               .where({ schedule_id: schedule.id, shift_date: dateStr })
@@ -251,96 +243,89 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
               .map((a: any) => a.employee_id)
           );
 
-          // ── Process each section ────────────────────────────────────────────
           for (const section of sections) {
             const sectionShifts = getSectionShifts(section);
             if (!sectionShifts.length) continue;
 
-            // Get eligible employees for this section
             const eligible = section.role_id
-              ? employees.filter(e => e.role_id === section.role_id)
+              ? employees.filter((e: any) => e.role_id === section.role_id)
               : employees;
-
             if (!eligible.length) continue;
 
-            // Check who is available (not on time off, not marked unavailable)
             const onTimeOff = await trx('time_off_requests')
-              .whereIn('employee_id', eligible.map(e => e.id))
+              .whereIn('employee_id', eligible.map((e: any) => e.id))
               .where('status', 'approved')
               .where('start_date', '<=', dateStr)
               .where('end_date', '>=', dateStr)
               .select('employee_id');
             const onTimeOffIds = new Set(onTimeOff.map((r: any) => r.employee_id));
 
-            // Track skipped employees for the summary
+            // Track skipped
             for (const emp of eligible) {
               if (onTimeOffIds.has(emp.id)) {
-                const existing = skippedStaff.find(s => s.name === `${emp.first_name} ${emp.last_name}` && s.date === dateStr);
-                if (!existing) {
-                  skippedStaff.push({ name: `${emp.first_name} ${emp.last_name}`, date: dateStr, reason: 'Approved time off' });
-                }
+                const exists = skippedStaff.find(s => s.name === `${emp.first_name} ${emp.last_name}` && s.date === dateStr);
+                if (!exists) skippedStaff.push({ name: `${emp.first_name} ${emp.last_name}`, date: dateStr, reason: 'Approved time off' });
               }
             }
 
             const unavailable = await trx('availability')
-              .whereIn('employee_id', eligible.map(e => e.id))
+              .whereIn('employee_id', eligible.map((e: any) => e.id))
               .where({ day_of_week: dayOfWeek, is_unavailable: true })
               .select('employee_id');
             const unavailableIds = new Set(unavailable.map((r: any) => r.employee_id));
 
-            // Available = eligible, not on time off, not marked unavailable
-            const available = eligible.filter(e =>
-              !onTimeOffIds.has(e.id) &&
-              !unavailableIds.has(e.id)
+            const available = eligible.filter((e: any) =>
+              !onTimeOffIds.has(e.id) && !unavailableIds.has(e.id)
             );
-
             if (!available.length) continue;
-
-            // ── Distribute staff across shift slots ──────────────────────────
-            // Goal: fill each slot up to max_staff, respect min/max per section,
-            // prioritise employees with fewer assignments and remaining hours.
-            //
-            // Strategy:
-            // 1. Split max_staff evenly across slots (round-robin)
-            // 2. For each slot, score and rank available employees:
-            //    - Not already working today = priority
-            //    - Fewer total assignments across the period = fairer rotation
-            //    - More remaining weekly hours = can take more shifts
-            // 3. Assign top-N where N = per-slot quota
 
             const totalSlots = sectionShifts.length;
             const maxPerSlot = Math.max(1, Math.floor(section.max_staff / totalSlots));
-            const minPerSlot = Math.max(1, Math.floor(section.min_staff / totalSlots));
 
             for (const shiftSlot of sectionShifts) {
               const template = findShiftTemplate(allShiftTemplates, shiftSlot.start, shiftSlot.end);
               if (!template) continue;
 
-              const hours = shiftHours(shiftSlot.start, shiftSlot.end);
+              // Use upper boundary for hours budget check when no end time
+              const hoursForBudget = shiftHours(shiftSlot.start, shiftSlot.end, dayCloseTime);
 
-              // Score each available employee for this slot
               const scored = available
-                .filter(e => {
-                  // Must have remaining hours budget
+                .filter((e: any) => {
+                  // ── Contracted hours enforcement ──────────────────────────
+                  // Only applies if employee has enforce_contracted_hours ON
+                  // and has contracted_hours set
+                  if (e.enforce_contracted_hours && e.contracted_hours) {
+                    const usedHours = weekHours[e.id] || 0;
+                    const contractedLimit = e.contracted_hours;
+
+                    // If no end time: use upper boundary — still consider them
+                    // for the shift, but only if they have ANY remaining budget
+                    if (!shiftSlot.end) {
+                      // Upper boundary check: must have at least some hours left
+                      return usedHours < contractedLimit;
+                    }
+
+                    // With end time: strict check — must fit within budget
+                    return (usedHours + hoursForBudget) <= contractedLimit;
+                  }
+                  // No enforcement — use max_hours_per_week as soft limit
                   const remainingHours = e.max_hours_per_week - (weekHours[e.id] || 0);
-                  return remainingHours >= hours * 0.8; // allow 80% threshold
+                  return remainingHours >= hoursForBudget * 0.8;
                 })
-                .map(e => ({
+                .map((e: any) => ({
                   emp: e,
                   alreadyToday: alreadyToday.has(e.id),
                   totalAssignments: empTotalAssignments[e.id] || 0,
-                  remainingHours: e.max_hours_per_week - (weekHours[e.id] || 0),
+                  remainingHours: e.enforce_contracted_hours && e.contracted_hours
+                    ? e.contracted_hours - (weekHours[e.id] || 0)
+                    : e.max_hours_per_week - (weekHours[e.id] || 0),
                 }))
-                .sort((a, b) => {
-                  // 1. Prefer not already working today
+                .sort((a: any, b: any) => {
                   if (a.alreadyToday !== b.alreadyToday) return a.alreadyToday ? 1 : -1;
-                  // 2. Prefer fewer total assignments (fair rotation)
                   if (a.totalAssignments !== b.totalAssignments) return a.totalAssignments - b.totalAssignments;
-                  // 3. Prefer more remaining hours (more capacity)
                   return b.remainingHours - a.remainingHours;
                 });
 
-              // Assign up to maxPerSlot employees
               let slotAssigned = 0;
               for (const { emp } of scored) {
                 if (slotAssigned >= maxPerSlot) break;
@@ -358,7 +343,9 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
                     .returning('id');
 
                   if (inserted.length > 0) {
-                    weekHours[emp.id] = (weekHours[emp.id] || 0) + hours;
+                    // When no end time, use upper boundary for tracking
+                    // (conservative — protects contracted hours budget)
+                    weekHours[emp.id] = (weekHours[emp.id] || 0) + hoursForBudget;
                     empTotalAssignments[emp.id] = (empTotalAssignments[emp.id] || 0) + 1;
                     alreadyToday.add(emp.id);
                     slotAssigned++;
