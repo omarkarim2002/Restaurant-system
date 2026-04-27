@@ -226,7 +226,7 @@ export function RotaPage() {
 
         {/* Summary of selected */}
         <div style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '10px 12px', marginBottom: '1.25rem', maxHeight: '140px', overflowY: 'auto' }}>
-          {selectedAssignments.map(a => (
+          {selectedAssignments.map((a: any) => (
             <div key={a.id} style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '3px', display: 'flex', justifyContent: 'space-between' }}>
               <span>{a.first_name} {a.last_name}</span>
               <span style={{ color: 'var(--color-text-tertiary)' }}>{friendlyDate(format(new Date(a.shift_date), 'yyyy-MM-dd'))} · {a.shift_name}</span>
