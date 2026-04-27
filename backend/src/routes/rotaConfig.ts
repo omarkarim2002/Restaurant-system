@@ -210,7 +210,7 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
     const empTotalAssignments: Record<string, number> = {};
     for (const e of employees) empTotalAssignments[e.id] = 0;
 
-    const results: { week: string; schedule_id: string; assignments: number }[] = [];
+    const results: { week: string; schedule_id: string; assignments: number; skipped: { name: string; date: string; reason: string }[] }[] = [];
 
     for (const weekStart of mondays) {
       if (!empWeeklyHours[weekStart]) {
