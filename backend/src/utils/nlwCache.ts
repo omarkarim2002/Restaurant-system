@@ -45,7 +45,7 @@ export async function getNationalLivingWage(): Promise<{ rate: number; year: str
     );
 
     if (res.ok) {
-      const json = await res.json();
+      const json = await res.json() as any;
       const record = json?.result?.records?.[0];
       if (record) {
         const rate = parseFloat(record['National Living Wage'] || record['NLW'] || FALLBACK_RATE);
