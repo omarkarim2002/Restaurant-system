@@ -173,6 +173,7 @@ router.post('/generate', authenticate, requireManager, async (req: Request, res:
     const employees = await db('employees as e')
       .join('roles as r', 'e.role_id', 'r.id')
       .where('e.is_active', true)
+      .where('e.off_rota', false)
       .select('e.id', 'e.first_name', 'e.last_name', 'e.role_id', 'e.max_hours_per_week', 'e.employment_type', 'r.name as role_name');
 
     if (!employees.length) throw new AppError('No active employees found.', 400);
