@@ -19,18 +19,33 @@ function friendlyDate(d: string) {
   try { return format(parseISO(d), 'EEEE d MMM'); } catch { return d; }
 }
 
+type BulkAction = 'delete' | 'move';
+
 export function RotaPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [selectedWeek, setSelectedWeek] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [addShiftDate, setAddShiftDate] = useState<string | null>(null);
   const [showWarnings, setShowWarnings] = useState(false);
+
+  // Single shift confirm
   const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string; shiftName: string; date: string } | null>(null);
   const [confirmMove, setConfirmMove] = useState<{
     assignmentId: string; employeeName: string; shiftName: string;
     fromDate: string; toDate: string; scheduleId: string;
     employeeId: string; shiftId: string;
   } | null>(null);
+
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [confirmBulkMove, setConfirmBulkMove] = useState(false);
+  const [bulkMoveDate, setBulkMoveDate] = useState('');
+  const [bulkMoving, setBulkMoving] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Drag
   const [dragOver, setDragOver] = useState<string | null>(null);
   const dragItem = useRef<any>(null);
   const [moving, setMoving] = useState(false);
@@ -57,14 +72,12 @@ export function RotaPage() {
 
   const weekDates = Array.from({ length: 7 }, (_, i) => addDays(selectedWeek, i));
 
-  // Group and sort assignments by date, then by shift start time
   const assignmentsByDate: Record<string, any[]> = {};
   for (const a of schedule?.assignments || []) {
     const key = format(new Date(a.shift_date), 'yyyy-MM-dd');
     if (!assignmentsByDate[key]) assignmentsByDate[key] = [];
     assignmentsByDate[key].push(a);
   }
-  // Sort each day's assignments: earliest start first
   for (const key of Object.keys(assignmentsByDate)) {
     assignmentsByDate[key].sort((a, b) => {
       const aMin = a.start_time ? parseInt(a.start_time.replace(':', '')) : 0;
@@ -73,11 +86,86 @@ export function RotaPage() {
     });
   }
 
+  const allAssignments = schedule?.assignments || [];
   const warnings = advisory?.warnings || [];
   const understaffed = warnings.filter((w: any) => w.level === 'understaffed');
   const overstaffed = warnings.filter((w: any) => w.level === 'overstaffed');
+  const isPublished = currentSchedule?.status === 'published';
 
+  // ── Selection helpers ────────────────────────────────────────────────────────
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(allAssignments.map((a: any) => a.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    clearSelection();
+  }
+
+  const selectedAssignments = allAssignments.filter((a: any) => selectedIds.has(a.id));
+
+  // ── Bulk delete ───────────────────────────────────────────────────────────────
+  async function executeBulkDelete() {
+    setBulkDeleting(true);
+    try {
+      for (const a of selectedAssignments) {
+        await schedulesApi.removeAssignment(currentSchedule!.id, a.id);
+      }
+      qc.invalidateQueries({ queryKey: ['schedules', currentSchedule!.id] });
+      qc.invalidateQueries({ queryKey: ['schedules', currentSchedule!.id, 'advisory'] });
+      clearSelection();
+    } catch (err: any) {
+      alert('Some shifts could not be removed.');
+    } finally {
+      setBulkDeleting(false);
+      setConfirmBulkDelete(false);
+    }
+  }
+
+  // ── Bulk move ─────────────────────────────────────────────────────────────────
+  async function executeBulkMove() {
+    if (!bulkMoveDate || !currentSchedule) return;
+    setBulkMoving(true);
+    const errors: string[] = [];
+    try {
+      for (const a of selectedAssignments) {
+        try {
+          await schedulesApi.removeAssignment(currentSchedule.id, a.id);
+          await schedulesApi.addAssignment(currentSchedule.id, {
+            employee_id: a.employee_id,
+            shift_id: a.shift_id,
+            shift_date: bulkMoveDate,
+          });
+        } catch (err: any) {
+          errors.push(`${a.first_name} ${a.last_name}: ${err.response?.data?.error || 'conflict'}`);
+        }
+      }
+      qc.invalidateQueries({ queryKey: ['schedules', currentSchedule.id] });
+      qc.invalidateQueries({ queryKey: ['schedules', currentSchedule.id, 'advisory'] });
+      clearSelection();
+      if (errors.length > 0) alert(`Some shifts could not be moved:\n${errors.join('\n')}`);
+    } finally {
+      setBulkMoving(false);
+      setConfirmBulkMove(false);
+      setBulkMoveDate('');
+    }
+  }
+
+  // ── Single drag-and-drop ──────────────────────────────────────────────────────
   function handleDragStart(e: React.DragEvent, assignment: any) {
+    if (selectMode) return; // disable drag in select mode
     dragItem.current = assignment;
     e.dataTransfer.effectAllowed = 'move';
   }
@@ -122,20 +210,87 @@ export function RotaPage() {
     }
   }
 
-  const isPublished = currentSchedule?.status === 'published';
+  // ── Bulk move date picker modal ───────────────────────────────────────────────
+  const BulkMoveModal = () => (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300 }}>
+      <div style={{ background: 'white', borderRadius: '14px', width: '400px', padding: '1.75rem', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Move {selectedIds.size} shift{selectedIds.size !== 1 ? 's' : ''}</h3>
+          <button onClick={() => setConfirmBulkMove(false)} style={{ border: 'none', background: 'none', fontSize: '18px', color: '#999', cursor: 'pointer' }}>×</button>
+        </div>
+
+        <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.25rem' }}>
+          Select the date to move all selected shifts to. Each shift will keep its original shift type.
+          Any conflicts will be reported individually.
+        </p>
+
+        {/* Summary of selected */}
+        <div style={{ background: 'var(--color-background-secondary)', borderRadius: '8px', padding: '10px 12px', marginBottom: '1.25rem', maxHeight: '140px', overflowY: 'auto' }}>
+          {selectedAssignments.map(a => (
+            <div key={a.id} style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '3px', display: 'flex', justifyContent: 'space-between' }}>
+              <span>{a.first_name} {a.last_name}</span>
+              <span style={{ color: 'var(--color-text-tertiary)' }}>{friendlyDate(format(new Date(a.shift_date), 'yyyy-MM-dd'))} · {a.shift_name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+          <label className="form-label">Move all to this date</label>
+          <input
+            type="date"
+            value={bulkMoveDate}
+            min={weekKey}
+            max={weekEnd}
+            onChange={e => setBulkMoveDate(e.target.value)}
+          />
+          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '4px' }}>
+            Only dates within the current week
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={executeBulkMove}
+            disabled={!bulkMoveDate || bulkMoving}
+            style={{ flex: 1, background: '#1a1a18', color: 'white', border: 'none', borderRadius: '8px', padding: '10px', fontSize: '13px', fontWeight: 500, cursor: bulkMoveDate ? 'pointer' : 'not-allowed', opacity: bulkMoveDate ? 1 : 0.5 }}
+          >
+            {bulkMoving ? 'Moving…' : `Move ${selectedIds.size} shift${selectedIds.size !== 1 ? 's' : ''}`}
+          </button>
+          <button onClick={() => setConfirmBulkMove(false)} style={{ flex: 1, padding: '10px', fontSize: '13px', borderRadius: '8px' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="page" style={{ maxWidth: '100%' }}>
+      {/* Header */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Rota</h1>
           <p className="page-sub">Week of {format(selectedWeek, 'dd MMMM yyyy')}</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={() => setSelectedWeek(subWeeks(selectedWeek, 1))}>← Prev</button>
           <button onClick={() => setSelectedWeek(startOfWeek(new Date(), { weekStartsOn: 1 }))}>This week</button>
           <button onClick={() => setSelectedWeek(addWeeks(selectedWeek, 1))}>Next →</button>
           <button onClick={() => navigate('/rota-config')} style={{ fontSize: '12px' }}>⚙ Configure</button>
+          {!isPublished && currentSchedule && (
+            <button
+              onClick={() => { setSelectMode(v => !v); clearSelection(); }}
+              style={{
+                fontSize: '12px', padding: '6px 12px',
+                background: selectMode ? '#1a1a18' : undefined,
+                color: selectMode ? 'white' : undefined,
+                border: selectMode ? 'none' : undefined,
+                fontWeight: selectMode ? 500 : 400,
+              }}
+            >
+              {selectMode ? '✓ Selecting' : 'Select shifts'}
+            </button>
+          )}
           {!currentSchedule && (
             <button className="btn-primary" disabled={createSchedule.isPending}
               onClick={() => createSchedule.mutate({ week_start: weekKey })}>
@@ -151,23 +306,74 @@ export function RotaPage() {
         </div>
       </div>
 
-      {/* Shift legend */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        {[
-          { label: 'Opening', bg: '#bfdbfe', text: '#1e40af' },
-          { label: 'Mid', bg: '#fef08a', text: '#854d0e' },
-          { label: 'Closing', bg: '#ddd6fe', text: '#5b21b6' },
-          { label: 'Full day', bg: '#bbf7d0', text: '#166534' },
-        ].map(({ label, bg, text }) => (
-          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-            <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: bg, border: `0.5px solid ${text}40` }} />
-            {label}
+      {/* Bulk action toolbar — appears when items are selected */}
+      {selectMode && (
+        <div style={{
+          background: '#1a1a18', borderRadius: '10px', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1rem',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ fontSize: '13px', color: 'white', fontWeight: 500 }}>
+            {selectedIds.size === 0
+              ? 'Click the checkbox on any shift to select it'
+              : `${selectedIds.size} shift${selectedIds.size !== 1 ? 's' : ''} selected`}
           </div>
-        ))}
-        <div style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-          Sorted earliest → latest within each day
+          <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', flexWrap: 'wrap' }}>
+            {selectedIds.size > 0 && (
+              <>
+                <button
+                  onClick={() => setConfirmBulkMove(true)}
+                  style={{ fontSize: '12px', padding: '5px 12px', background: 'white', color: '#1a1a18', border: 'none', borderRadius: '6px', fontWeight: 500, cursor: 'pointer' }}
+                >
+                  Move {selectedIds.size} shift{selectedIds.size !== 1 ? 's' : ''} →
+                </button>
+                <button
+                  onClick={() => setConfirmBulkDelete(true)}
+                  style={{ fontSize: '12px', padding: '5px 12px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 500, cursor: 'pointer' }}
+                >
+                  Remove {selectedIds.size} shift{selectedIds.size !== 1 ? 's' : ''}
+                </button>
+                <button onClick={clearSelection} style={{ fontSize: '12px', padding: '5px 10px', background: 'transparent', color: 'rgba(255,255,255,0.5)', border: '0.5px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
+                  Clear
+                </button>
+              </>
+            )}
+            {allAssignments.length > 0 && (
+              <button
+                onClick={selectedIds.size === allAssignments.length ? clearSelection : selectAll}
+                style={{ fontSize: '12px', padding: '5px 10px', background: 'transparent', color: 'rgba(255,255,255,0.6)', border: '0.5px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                {selectedIds.size === allAssignments.length ? 'Deselect all' : 'Select all'}
+              </button>
+            )}
+            <button onClick={exitSelectMode} style={{ fontSize: '12px', padding: '5px 10px', background: 'transparent', color: 'rgba(255,255,255,0.4)', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+              Done
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Shift legend */}
+      {!selectMode && (
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {[
+            { label: 'Opening', bg: '#bfdbfe', text: '#1e40af' },
+            { label: 'Mid', bg: '#fef08a', text: '#854d0e' },
+            { label: 'Closing', bg: '#ddd6fe', text: '#5b21b6' },
+            { label: 'Full day', bg: '#bbf7d0', text: '#166534' },
+          ].map(({ label, bg, text }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: bg, border: `0.5px solid ${text}40` }} />
+              {label}
+            </div>
+          ))}
+          {!isPublished && currentSchedule && (
+            <div style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+              💡 Drag to move · Click × to remove · Use "Select shifts" for bulk actions
+            </div>
+          )}
+        </div>
+      )}
 
       {warnings.length > 0 && (
         <div onClick={() => setShowWarnings(true)} style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '1rem' }}>
@@ -187,12 +393,6 @@ export function RotaPage() {
       {closedDates.size > 0 && (
         <div style={{ background: '#f7f6f3', border: '0.5px solid var(--color-border-tertiary)', borderRadius: '8px', padding: '8px 14px', marginBottom: '1rem', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
           🔒 {closedDates.size} day{closedDates.size !== 1 ? 's' : ''} this week marked as closed
-        </div>
-      )}
-
-      {!isPublished && currentSchedule && (
-        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '0.75rem' }}>
-          💡 Drag shift cards between days to move · Click × to remove
         </div>
       )}
 
@@ -216,6 +416,7 @@ export function RotaPage() {
                   const isClosed = closedDates.has(key);
                   const closedInfo = closedDaysData.find((c: any) => (c.closed_date?.split?.('T')?.[0] || c.closed_date) === key);
                   const dayCount = assignmentsByDate[key]?.length ?? 0;
+                  const daySelectedCount = (assignmentsByDate[key] || []).filter((a: any) => selectedIds.has(a.id)).length;
 
                   return (
                     <th key={i} style={{
@@ -231,7 +432,11 @@ export function RotaPage() {
                       </div>
                       {isClosed && <div style={{ fontSize: '9px', color: '#b0aea6', marginTop: '2px' }}>🔒 {closedInfo?.reason?.replace('Bank Holiday — ', '') || 'Closed'}</div>}
                       {!isClosed && hasWarn && <div style={{ fontSize: '9px', color: '#C41E3A', marginTop: '2px' }}>⚠ warning</div>}
-                      {!isClosed && dayCount > 0 && <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{dayCount} staff</div>}
+                      {!isClosed && dayCount > 0 && (
+                        <div style={{ fontSize: '9px', color: selectMode && daySelectedCount > 0 ? '#C41E3A' : 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                          {selectMode && daySelectedCount > 0 ? `${daySelectedCount}/${dayCount} selected` : `${dayCount} staff`}
+                        </div>
+                      )}
                     </th>
                   );
                 })}
@@ -243,13 +448,13 @@ export function RotaPage() {
                   const key = format(date, 'yyyy-MM-dd');
                   const dayAssignments = assignmentsByDate[key] || [];
                   const isClosed = closedDates.has(key);
-                  const isDragTarget = dragOver === key && !isClosed;
+                  const isDragTarget = dragOver === key && !isClosed && !selectMode;
 
                   return (
                     <td key={i}
-                      onDragOver={!isPublished && !isClosed ? (e) => { e.preventDefault(); setDragOver(key); } : undefined}
+                      onDragOver={!isPublished && !isClosed && !selectMode ? (e) => { e.preventDefault(); setDragOver(key); } : undefined}
                       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null); }}
-                      onDrop={!isPublished && !isClosed ? (e) => handleDrop(e, key) : undefined}
+                      onDrop={!isPublished && !isClosed && !selectMode ? (e) => handleDrop(e, key) : undefined}
                       style={{
                         verticalAlign: 'top', padding: '6px',
                         borderRight: '0.5px solid var(--color-border-tertiary)',
@@ -270,18 +475,56 @@ export function RotaPage() {
                         </div>
                       )}
 
-                      {!isClosed && dayAssignments.map((a: any) => (
-                        <ShiftCard
-                          key={a.id}
-                          assignment={a}
-                          isPublished={isPublished}
-                          onRemove={() => setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}`, shiftName: a.shift_name, date: format(new Date(a.shift_date), 'EEEE d MMM') })}
-                          onDragStart={(e) => handleDragStart(e, a)}
-                          onDragEnd={handleDragEnd}
-                        />
-                      ))}
+                      {!isClosed && dayAssignments.map((a: any) => {
+                        const isSelected = selectedIds.has(a.id);
+                        return (
+                          <div key={a.id} style={{ position: 'relative' }}>
+                            {/* Selection checkbox — only visible in select mode */}
+                            {selectMode && !isPublished && (
+                              <div
+                                onClick={() => toggleSelect(a.id)}
+                                style={{
+                                  position: 'absolute', top: '5px', left: '5px', zIndex: 10,
+                                  width: '16px', height: '16px', borderRadius: '4px',
+                                  border: isSelected ? 'none' : '1.5px solid rgba(0,0,0,0.25)',
+                                  background: isSelected ? '#C41E3A' : 'rgba(255,255,255,0.9)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isSelected && (
+                                  <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                                    <path d="M2 5l2.5 2.5L8 3" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                                  </svg>
+                                )}
+                              </div>
+                            )}
+                            <div
+                              onClick={selectMode && !isPublished ? () => toggleSelect(a.id) : undefined}
+                              style={{
+                                outline: isSelected ? '2px solid #C41E3A' : 'none',
+                                outlineOffset: '1px',
+                                borderRadius: '7px',
+                                opacity: selectMode && !isSelected ? 0.6 : 1,
+                                cursor: selectMode ? 'pointer' : 'default',
+                                transition: 'opacity 0.1s, outline 0.1s',
+                                paddingLeft: selectMode ? '4px' : 0,
+                              }}
+                            >
+                              <ShiftCard
+                                assignment={a}
+                                isPublished={isPublished || selectMode}
+                                onRemove={() => setConfirmRemove({ id: a.id, name: `${a.first_name} ${a.last_name}`, shiftName: a.shift_name, date: format(new Date(a.shift_date), 'EEEE d MMM') })}
+                                onDragStart={(e) => handleDragStart(e, a)}
+                                onDragEnd={handleDragEnd}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
 
-                      {!isPublished && !isClosed && (
+                      {!isPublished && !isClosed && !selectMode && (
                         <button onClick={() => setAddShiftDate(key)} style={{ width: '100%', marginTop: '2px', padding: '5px', fontSize: '11px', cursor: 'pointer', background: 'transparent', border: '0.5px dashed var(--color-border-secondary)', borderRadius: '6px', color: 'var(--color-text-tertiary)' }}>
                           + Add
                         </button>
@@ -295,10 +538,12 @@ export function RotaPage() {
         </div>
       )}
 
+      {/* Modals */}
       {addShiftDate && currentSchedule && (
         <AssignShiftModal scheduleId={currentSchedule.id} date={addShiftDate} onClose={() => setAddShiftDate(null)} />
       )}
       {showWarnings && <WarningsModal warnings={warnings} onClose={() => setShowWarnings(false)} />}
+
       {confirmRemove && (
         <ConfirmModal
           title="Remove this shift?"
@@ -308,6 +553,7 @@ export function RotaPage() {
           onCancel={() => setConfirmRemove(null)}
         />
       )}
+
       {confirmMove && (
         <ConfirmModal
           title="Move this shift?"
@@ -316,6 +562,19 @@ export function RotaPage() {
           onConfirm={executeMove} onCancel={() => setConfirmMove(null)}
         />
       )}
+
+      {confirmBulkDelete && (
+        <ConfirmModal
+          title={`Remove ${selectedIds.size} shift${selectedIds.size !== 1 ? 's' : ''}?`}
+          message={`This will permanently remove ${selectedIds.size} shift assignment${selectedIds.size !== 1 ? 's' : ''} from the rota. This cannot be undone.`}
+          confirmLabel={bulkDeleting ? 'Removing…' : `Remove ${selectedIds.size} shift${selectedIds.size !== 1 ? 's' : ''}`}
+          cancelLabel="Cancel" danger
+          onConfirm={executeBulkDelete}
+          onCancel={() => setConfirmBulkDelete(false)}
+        />
+      )}
+
+      {confirmBulkMove && <BulkMoveModal />}
     </div>
   );
 }
