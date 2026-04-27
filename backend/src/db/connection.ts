@@ -1,20 +1,16 @@
-import type { Knex } from 'knex';
+import knex from 'knex';
 import dotenv from 'dotenv';
-dotenv.config();
+import path from 'path';
 
-const config: { [key: string]: Knex.Config } = {
-  development: {
-    client: 'pg',
-    connection: {
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
-    },
-    migrations: {
-      directory: './migrations',
-      extension: 'ts',
-      loadExtensions: ['.ts'],
-    },
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const db = knex({
+  client: 'pg',
+  connection: {
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
   },
-};
+  pool: { min: 2, max: 10 },
+});
 
-export default config;
+export default db;
