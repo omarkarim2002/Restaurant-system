@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { format, startOfWeek, addWeeks, subWeeks, parseISO } from 'date-fns';
+import { format, startOfWeek, addWeeks, subWeeks, parseISO, addMonths, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import api from '../api/index';
 
@@ -56,6 +56,17 @@ function useWeeklyWages(weekStart: string) {
     staleTime: 0,
     refetchOnWindowFocus: true,
     refetchInterval: 30_000,
+  });
+}
+
+function useMonthlyWages(monthStart: string) {
+  return useQuery({
+    queryKey: ['wages', 'month', monthStart],
+    queryFn: () => api.get(`/wages/month?month_start=${monthStart}`).then(r => r.data.data),
+    enabled: !!monthStart,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
 }
 
@@ -306,6 +317,271 @@ function WeeklySummaryTab() {
       <div style={{ marginTop: '1rem', fontSize: '12px', color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
         Predicted wages update in real time as you confirm finish times on the rota — once every shift is confirmed, predicted and confirmed figures will match exactly.
       </div>
+    </div>
+  );
+}
+
+
+// ─── Monthly View Tab ─────────────────────────────────────────────────────────
+
+function MonthlyViewTab() {
+  const today = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date(today.getFullYear(), today.getMonth(), 1);
+    return format(d, 'yyyy-MM-dd');
+  });
+
+  const { data: monthData, isLoading } = useMonthlyWages(selectedMonth);
+  const monthLabel = format(parseISO(selectedMonth), 'MMMM yyyy');
+
+  function prevMonth() {
+    const d = parseISO(selectedMonth);
+    setSelectedMonth(format(new Date(d.getFullYear(), d.getMonth() - 1, 1), 'yyyy-MM-dd'));
+  }
+  function nextMonth() {
+    const d = parseISO(selectedMonth);
+    setSelectedMonth(format(new Date(d.getFullYear(), d.getMonth() + 1, 1), 'yyyy-MM-dd'));
+  }
+  function thisMonth() {
+    setSelectedMonth(format(new Date(today.getFullYear(), today.getMonth(), 1), 'yyyy-MM-dd'));
+  }
+
+  const weeks = monthData?.weeks ?? [];
+  const employees = monthData?.employee_totals ?? [];
+  const totals = monthData?.totals ?? { predicted_wage: 0, confirmed_wage: 0, predicted_hours: 0, confirmed_hours: 0 };
+  const unsignedWeeks = weeks.filter((w: any) => w.status !== 'signed_off' && w.has_assignments);
+
+  return (
+    <div>
+      {/* Month navigation */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}>
+        <button onClick={prevMonth}>← Prev</button>
+        <button onClick={thisMonth}>This month</button>
+        <button onClick={nextMonth}>Next →</button>
+        <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text-primary)', marginLeft: '8px' }}>
+          {monthLabel}
+        </div>
+      </div>
+
+      {/* Monthly metric cards */}
+      <div className="metric-grid" style={{ marginBottom: '1.5rem' }}>
+        <div className="metric-card">
+          <div className="metric-label">Confirmed wages</div>
+          <div className="metric-val" style={{ color: '#27500a' }}>
+            {totals.confirmed_wage > 0
+              ? `£${totals.confirmed_wage.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : '£0.00'}
+          </div>
+          <div className="metric-sub">{totals.confirmed_hours > 0 ? `${totals.confirmed_hours}h confirmed` : 'no confirmed shifts'}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Predicted wages (month)</div>
+          <div className="metric-val" style={{ color: '#C9973A' }}>
+            {isLoading ? '…' : totals.predicted_wage > 0
+              ? `£${totals.predicted_wage.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : '—'}
+          </div>
+          <div className="metric-sub">{totals.predicted_hours > 0 ? `${totals.predicted_hours}h total` : 'no schedules yet'}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Weeks in month</div>
+          <div className="metric-val">{weeks.length}</div>
+          <div className="metric-sub">{unsignedWeeks.length > 0 ? `${unsignedWeeks.length} not yet signed off` : weeks.length > 0 ? 'all signed off' : 'no schedules'}</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Average weekly wage</div>
+          <div className="metric-val" style={{ color: 'var(--color-text-primary)', fontSize: '22px' }}>
+            {weeks.filter((w: any) => w.has_assignments).length > 0
+              ? `£${(totals.predicted_wage / weeks.filter((w: any) => w.has_assignments).length).toFixed(0)}`
+              : '—'}
+          </div>
+          <div className="metric-sub">per week with shifts</div>
+        </div>
+      </div>
+
+      {/* Unsigned weeks warning */}
+      {unsignedWeeks.length > 0 && (
+        <div style={{ background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 14px', marginBottom: '1.25rem', fontSize: '13px', color: '#633806', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>⚠</span>
+          <div>
+            <strong>{unsignedWeeks.length} week{unsignedWeeks.length !== 1 ? 's' : ''} not yet signed off</strong> — wages for these weeks may still change as finish times are confirmed.
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '2rem 0' }}>Loading monthly data…</div>
+      ) : weeks.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+          <div style={{ fontSize: '32px', marginBottom: '0.75rem' }}>📅</div>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No schedules for {monthLabel}</div>
+          <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>Create weekly rotas to see monthly wage totals here.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+          {/* Week-by-week breakdown */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '13px' }}>Week by week</h3>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Click a week to view detail</div>
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '150px 1fr 120px 120px 120px 100px',
+              padding: '8px 16px',
+              background: 'var(--color-background-secondary)',
+              borderBottom: '0.5px solid var(--color-border-tertiary)',
+              fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)',
+              textTransform: 'uppercase', letterSpacing: '.04em',
+            }}>
+              <div>Week</div>
+              <div>Status</div>
+              <div>Pred. hours</div>
+              <div>Pred. wages</div>
+              <div>Conf. wages</div>
+              <div>Sign-off</div>
+            </div>
+            {weeks.map((week: any, idx: number) => {
+              const isLast = idx === weeks.length - 1;
+              const isSigned = week.status === 'signed_off';
+              const hasData = week.has_assignments;
+              return (
+                <div
+                  key={week.week_start}
+                  onClick={() => window.location.href = '/wages'}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '150px 1fr 120px 120px 120px 100px',
+                    padding: '12px 16px',
+                    borderBottom: isLast ? 'none' : '0.5px solid var(--color-border-tertiary)',
+                    alignItems: 'center',
+                    background: isSigned ? '#f8fdf4' : 'transparent',
+                    cursor: 'pointer',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => { if (!isSigned) (e.currentTarget as HTMLElement).style.background = 'var(--color-background-secondary)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = isSigned ? '#f8fdf4' : 'transparent'; }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: 500 }}>
+                    {format(parseISO(week.week_start), 'dd MMM')} – {format(parseISO(week.week_end), 'dd MMM')}
+                  </div>
+                  <div>
+                    {!hasData ? (
+                      <span className="badge badge-gray">No schedule</span>
+                    ) : week.has_unconfirmed ? (
+                      <span className="badge badge-gold">⚠ Unconfirmed shifts</span>
+                    ) : isSigned ? (
+                      <span className="badge badge-green">🔒 Signed off</span>
+                    ) : (
+                      <span className="badge badge-gray">Draft</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                    {week.predicted_hours > 0 ? `${week.predicted_hours}h` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: week.predicted_wage > 0 ? '#C9973A' : '#d0cec6' }}>
+                    {week.predicted_wage > 0 ? `£${week.predicted_wage.toFixed(2)}` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: week.confirmed_wage > 0 ? '#27500a' : '#d0cec6' }}>
+                    {week.confirmed_wage > 0 ? `£${week.confirmed_wage.toFixed(2)}` : '—'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: isSigned ? '#27500a' : 'var(--color-text-tertiary)' }}>
+                    {isSigned ? `✓ ${week.signed_off_date ? format(parseISO(week.signed_off_date), 'd MMM') : ''}` : hasData ? 'Pending' : '—'}
+                  </div>
+                </div>
+              );
+            })}
+            {/* Monthly totals row */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '150px 1fr 120px 120px 120px 100px',
+              padding: '12px 16px',
+              background: 'var(--color-background-secondary)',
+              borderTop: '1.5px solid var(--color-border-secondary)',
+              fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)',
+            }}>
+              <div>Month total</div>
+              <div></div>
+              <div>{totals.predicted_hours > 0 ? `${totals.predicted_hours}h` : '—'}</div>
+              <div style={{ color: '#C9973A' }}>{totals.predicted_wage > 0 ? `£${totals.predicted_wage.toFixed(2)}` : '—'}</div>
+              <div style={{ color: '#27500a' }}>{totals.confirmed_wage > 0 ? `£${totals.confirmed_wage.toFixed(2)}` : '—'}</div>
+              <div></div>
+            </div>
+          </div>
+
+          {/* Per-employee monthly breakdown */}
+          {employees.length > 0 && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
+                <h3 style={{ margin: 0, fontSize: '13px' }}>Per employee — {monthLabel}</h3>
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 90px 110px 110px 110px 110px',
+                padding: '8px 16px',
+                background: 'var(--color-background-secondary)',
+                borderBottom: '0.5px solid var(--color-border-tertiary)',
+                fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)',
+                textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>
+                <div>Employee</div>
+                <div>Rate</div>
+                <div>Pred. hours</div>
+                <div>Pred. wages</div>
+                <div>Conf. hours</div>
+                <div>Conf. wages</div>
+              </div>
+              {employees.map((emp: any, idx: number) => (
+                <div key={emp.employee_id} style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 90px 110px 110px 110px 110px',
+                  padding: '11px 16px',
+                  borderBottom: idx < employees.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none',
+                  alignItems: 'center',
+                  background: emp.confirmed_hours > 0 && !emp.has_unconfirmed ? '#f8fdf4' : 'transparent',
+                }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{emp.first_name} {emp.last_name}</div>
+                    {!emp.hourly_rate && <div style={{ fontSize: '10px', color: '#9e1830' }}>No rate set</div>}
+                  </div>
+                  <div style={{ fontSize: '13px', color: emp.hourly_rate ? 'var(--color-text-primary)' : '#d0cec6', fontWeight: emp.hourly_rate ? 500 : 400 }}>
+                    {emp.hourly_rate ? `£${parseFloat(emp.hourly_rate).toFixed(2)}` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                    {emp.predicted_hours > 0 ? `${emp.predicted_hours}h` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: emp.predicted_wage > 0 ? '#C9973A' : '#d0cec6' }}>
+                    {emp.predicted_wage > 0 ? `£${emp.predicted_wage.toFixed(2)}` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', color: emp.confirmed_hours > 0 ? '#27500a' : '#d0cec6' }}>
+                    {emp.confirmed_hours > 0 ? `${emp.confirmed_hours}h` : '—'}
+                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: emp.confirmed_wage > 0 ? '#27500a' : '#d0cec6' }}>
+                    {emp.confirmed_wage > 0 ? `£${emp.confirmed_wage.toFixed(2)}` : '—'}
+                  </div>
+                </div>
+              ))}
+              {/* Employee totals */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 90px 110px 110px 110px 110px',
+                padding: '11px 16px',
+                background: 'var(--color-background-secondary)',
+                borderTop: '1.5px solid var(--color-border-secondary)',
+                fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)',
+              }}>
+                <div>Total</div>
+                <div></div>
+                <div>{totals.predicted_hours > 0 ? `${totals.predicted_hours}h` : '—'}</div>
+                <div style={{ color: '#C9973A' }}>{totals.predicted_wage > 0 ? `£${totals.predicted_wage.toFixed(2)}` : '—'}</div>
+                <div style={{ color: '#27500a' }}>{totals.confirmed_hours > 0 ? `${totals.confirmed_hours}h` : '—'}</div>
+                <div style={{ color: '#27500a' }}>{totals.confirmed_wage > 0 ? `£${totals.confirmed_wage.toFixed(2)}` : '—'}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -604,7 +880,7 @@ function WageRatesTab() {
 
 // ─── Main WagesPage with tabs ─────────────────────────────────────────────────
 
-type Tab = 'summary' | 'rates';
+type Tab = 'summary' | 'monthly' | 'rates';
 
 export function WagesPage() {
   const [tab, setTab] = useState<Tab>('summary');
@@ -621,8 +897,9 @@ export function WagesPage() {
       {/* Sub tabs */}
       <div style={{ display: 'flex', gap: '0', marginBottom: '1.75rem', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
         {([
-          { id: 'summary', label: 'Weekly summary' },
-          { id: 'rates',   label: 'Pay rates & hours' },
+          { id: 'summary',  label: 'Weekly summary' },
+          { id: 'monthly',  label: 'Monthly view' },
+          { id: 'rates',    label: 'Pay rates & hours' },
         ] as { id: Tab; label: string }[]).map(t => (
           <button
             key={t.id}
@@ -640,8 +917,9 @@ export function WagesPage() {
         ))}
       </div>
 
-      {tab === 'summary' && <WeeklySummaryTab />}
-      {tab === 'rates'   && <WageRatesTab />}
+      {tab === 'summary'  && <WeeklySummaryTab />}
+      {tab === 'monthly'  && <MonthlyViewTab />}
+      {tab === 'rates'    && <WageRatesTab />}
     </div>
   );
 }
