@@ -53,7 +53,9 @@ function useWeeklyWages(weekStart: string) {
     queryKey: ['wages', 'week', weekStart],
     queryFn: () => api.get(`/wages/week?week_start=${weekStart}`).then(r => r.data.data),
     enabled: !!weekStart,
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
   });
 }
 
@@ -101,19 +103,25 @@ function WeeklySummaryTab() {
       {/* Summary metric cards */}
       <div className="metric-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="metric-card">
-          <div className="metric-label">Confirmed wages</div>
+          <div className="metric-label">Confirmed wages (so far)</div>
           <div className="metric-val" style={{ color: '#27500a' }}>
             {totalConfirmed > 0 ? `£${totalConfirmed.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '£0.00'}
           </div>
-          <div className="metric-sub">{totalConfirmedHours > 0 ? `${totalConfirmedHours}h confirmed` : 'no confirmed shifts yet'}</div>
+          <div className="metric-sub">
+            {totalConfirmedHours > 0
+              ? `${totalConfirmedHours}h with confirmed finish times`
+              : 'no finish times confirmed yet'}
+          </div>
         </div>
         <div className="metric-card">
-          <div className="metric-label">Predicted wages{wages?.has_unconfirmed ? ' ⚠' : ''}</div>
+          <div className="metric-label">Predicted wages (full week)</div>
           <div className="metric-val" style={{ color: '#C9973A' }}>
             {isLoading ? '…' : `£${totalPredicted.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           </div>
           <div className="metric-sub" style={{ color: wages?.has_unconfirmed ? '#8a6220' : undefined }}>
-            {wages?.has_unconfirmed ? `${unconfirmedCount} staff with unconfirmed shifts` : `${totalPredictedHours}h scheduled`}
+            {wages?.has_unconfirmed
+              ? <span>⚠ some shifts unconfirmed — estimate only</span>
+              : `${totalPredictedHours}h total scheduled`}
           </div>
         </div>
         <div className="metric-card">
@@ -139,6 +147,20 @@ function WeeklySummaryTab() {
           </div>
         </div>
       </div>
+
+      {/* Context banner — always shown when there's data */}
+      {wages && wages.employee_breakdown?.length > 0 && (
+        <div style={{ background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', fontSize: '12px', color: 'var(--color-text-secondary)', display: 'flex', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#eaf3de', border: '0.5px solid #97c459', flexShrink: 0 }} />
+            <span><strong style={{ color: 'var(--color-text-primary)' }}>Confirmed</strong> — actual finish times entered on the rota. Exact.</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#fef9c3', border: '0.5px solid #fde047', flexShrink: 0 }} />
+            <span><strong style={{ color: 'var(--color-text-primary)' }}>Predicted</strong> — full week projection using scheduled shifts + estimation engine. Updates as finish times are confirmed.</span>
+          </div>
+        </div>
+      )}
 
       {/* Unconfirmed warning */}
       {wages?.has_unconfirmed && (
@@ -282,9 +304,7 @@ function WeeklySummaryTab() {
       )}
 
       <div style={{ marginTop: '1rem', fontSize: '12px', color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
-        <strong>Predicted wages</strong> use scheduled hours + the estimation engine (past actuals → scheduled times → defaults).
-        <strong> Confirmed wages</strong> use actual finish times entered on the rota page.
-        Once all finish times are confirmed for a week, predicted = confirmed.
+        Predicted wages update in real time as you confirm finish times on the rota — once every shift is confirmed, predicted and confirmed figures will match exactly.
       </div>
     </div>
   );
