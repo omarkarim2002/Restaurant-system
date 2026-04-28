@@ -9,6 +9,10 @@ import { RotaConfigPage } from './pages/RotaConfigPage';
 import { StaffPage } from './pages/StaffPage';
 import { TimeOffPage } from './pages/TimeOffPage';
 import { WagesPage } from './pages/WagesPage';
+import { InventoryPage } from './pages/InventoryPage';
+import { InventoryOrderPage } from './pages/InventoryOrderPage';
+import { InventoryDeliveriesPage } from './pages/InventoryDeliveriesPage';
+import { InventoryAnalyticsPage } from './pages/InventoryAnalyticsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -25,12 +29,16 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/rota" element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
-          <Route path="/rota-config" element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
-          <Route path="/staff" element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
-          <Route path="/time-off" element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
-          <Route path="/wages" element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
+          <Route path="/"                       element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/rota"                   element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
+          <Route path="/rota-config"            element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
+          <Route path="/staff"                  element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
+          <Route path="/time-off"               element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
+          <Route path="/wages"                  element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
+          <Route path="/inventory"              element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
+          <Route path="/inventory/order"        element={<ProtectedRoute><InventoryOrderPage /></ProtectedRoute>} />
+          <Route path="/inventory/deliveries"   element={<ProtectedRoute><InventoryDeliveriesPage /></ProtectedRoute>} />
+          <Route path="/inventory/analytics"    element={<ProtectedRoute><InventoryAnalyticsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
@@ -72,7 +80,7 @@ function LoginPage() {
           </div>
           <div>
             <div style={{ fontSize: '15px', fontWeight: 500 }}>Restaurant MS</div>
-            <div style={{ fontSize: '11px', color: '#888' }}>Staff management platform</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>Management platform</div>
           </div>
         </div>
         <h2 style={{ fontSize: '20px', fontWeight: 500, marginBottom: '0.4rem' }}>Sign in</h2>
