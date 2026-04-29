@@ -1,52 +1,35 @@
-import React, { useState, useRef } from 'react';
-import { format, subWeeks, parseISO } from 'date-fns';
+import React, { useState } from 'react';
+import { format, subWeeks, startOfWeek, parseISO, addWeeks } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../api/index';
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
-function useItemCosts() {
-  return useQuery({ queryKey: ['inv-costs-items'], queryFn: () => api.get('/inventory/costs/items').then(r => r.data.data), staleTime: 60_000 });
+function usePatterns() {
+  return useQuery({ queryKey: ['inv-patterns'], queryFn: () => api.get('/inventory/analytics/patterns').then(r => r.data.data), staleTime: 300_000 });
 }
-function useInvoices() {
-  return useQuery({ queryKey: ['invoices'], queryFn: () => api.get('/inventory/costs/invoices').then(r => r.data.data), staleTime: 30_000 });
+function useWaste(from: string) {
+  return useQuery({ queryKey: ['inv-waste', from], queryFn: () => api.get(`/inventory/analytics/waste?from=${from}`).then(r => r.data.data), staleTime: 60_000 });
 }
-function useSpend(from: string, to: string) {
-  return useQuery({ queryKey: ['inv-spend', from, to], queryFn: () => api.get(`/inventory/costs/spend?from=${from}&to=${to}`).then(r => r.data.data), staleTime: 60_000 });
+function useDigests() {
+  return useQuery({ queryKey: ['inv-digests'], queryFn: () => api.get('/inventory/analytics/digest').then(r => r.data.data), staleTime: 300_000 });
 }
-function useBudgets() {
-  return useQuery({ queryKey: ['inv-budgets'], queryFn: () => api.get('/inventory/costs/budgets').then(r => r.data.data), staleTime: 60_000 });
-}
-function useUpdateCost() {
+function useGenerateDigest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, unit_cost }: any) => api.patch(`/inventory/costs/items/${id}`, { unit_cost }).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inv-costs-items'] }),
+    mutationFn: (week_start: string) => api.post('/inventory/analytics/digest', { week_start }).then(r => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inv-digests'] }),
   });
 }
-function useExtractInvoice() {
-  return useMutation({ mutationFn: (b: any) => api.post('/inventory/costs/invoices/extract', b).then(r => r.data.data) });
-}
-function useSaveInvoice() {
+function useLogWaste() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (b: any) => api.post('/inventory/costs/invoices', b).then(r => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['invoices'] });
-      qc.invalidateQueries({ queryKey: ['inv-costs-items'] });
-      qc.invalidateQueries({ queryKey: ['inv-spend'] });
-    },
+    mutationFn: (b: any) => api.post('/inventory/analytics/waste', b).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['inv-waste'] }),
   });
 }
-function useSaveBudget() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (b: any) => api.post('/inventory/costs/budgets', b).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inv-budgets'] }),
-  });
-}
-function useSuppliers() {
-  return useQuery({ queryKey: ['suppliers'], queryFn: () => api.get('/inventory/deliveries/suppliers').then(r => r.data.data), staleTime: 60_000 });
+function useItems() {
+  return useQuery({ queryKey: ['inv-items'], queryFn: () => api.get('/inventory/items').then(r => r.data.data), staleTime: 60_000 });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,240 +43,146 @@ const COLOR_MAP: Record<string, { bg: string; text: string }> = {
   gray:  { bg: '#f1efe8', text: '#444441' },
 };
 
-// ── Invoice upload modal ──────────────────────────────────────────────────────
+// ── Log waste modal ───────────────────────────────────────────────────────────
 
-function InvoiceModal({ suppliers, onClose }: { suppliers: any[]; onClose: () => void }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const extract = useExtractInvoice();
-  const save    = useSaveInvoice();
+function WasteModal({ items, onClose }: { items: any[]; onClose: () => void }) {
+  const logWaste = useLogWaste();
+  const [form, setForm] = useState({ item_id: items[0]?.id || '', quantity: '', reason: '', notes: '', log_date: format(new Date(), 'yyyy-MM-dd') });
+  const [error, setError] = useState('');
+  const f = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
 
-  const [preview, setPreview]   = useState<string | null>(null);
-  const [extracted, setExtracted] = useState<any | null>(null);
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '');
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState('');
-
-  async function handleFile(file: File) {
-    setError(''); setExtracted(null);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = (reader.result as string).split(',')[1];
-      setPreview(reader.result as string);
-      try {
-        const data = await extract.mutateAsync({ image_base64: base64, media_type: file.type || 'image/jpeg' });
-        setExtracted(data);
-        if (data.supplier_name) {
-          const match = suppliers.find((s: any) => s.name.toLowerCase().includes(data.supplier_name.toLowerCase()));
-          if (match) setSupplierId(match.id);
-        }
-      } catch (e: any) { setError(e.response?.data?.error || 'Extraction failed — try a clearer photo.'); }
-    };
-    reader.readAsDataURL(file);
+  async function save() {
+    if (!form.item_id || !form.quantity) { setError('Item and quantity are required.'); return; }
+    try { await logWaste.mutateAsync(form); onClose(); }
+    catch (e: any) { setError(e.response?.data?.error || 'Failed to log waste.'); }
   }
-
-  async function handleSave() {
-    if (!extracted) return;
-    setSaving(true);
-    try {
-      await save.mutateAsync({
-        supplier_id:   supplierId || null,
-        invoice_ref:   extracted.invoice_ref,
-        invoice_date:  extracted.invoice_date || format(new Date(), 'yyyy-MM-dd'),
-        total_amount:  extracted.total_amount,
-        lines:         extracted.lines || [],
-      });
-      onClose();
-    } catch (e: any) { setError(e.response?.data?.error || 'Failed to save invoice.'); }
-    finally { setSaving(false); }
-  }
-
-  const matchedLines  = extracted?.lines?.filter((l: any) => l.item_id) || [];
-  const unmatchedLines = extracted?.lines?.filter((l: any) => !l.item_id) || [];
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-      <div style={{ background: 'white', borderRadius: '16px', width: '580px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ padding: '1.25rem 1.5rem 1rem', borderBottom: '0.5px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexShrink: 0 }}>
-          <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Upload invoice</h3>
-            <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>AI extracts line items and updates unit costs automatically</div>
-          </div>
+      <div style={{ background: 'white', borderRadius: '16px', width: '400px', padding: '1.75rem', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Log waste</h3>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#aaa', cursor: 'pointer' }}>×</button>
         </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
-          {error && <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '8px 12px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>{error}</div>}
-
-          {!extracted && (
-            <div onClick={() => fileRef.current?.click()} onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-              style={{ border: '2px dashed var(--color-border-secondary)', borderRadius: '10px', padding: preview ? '12px' : '2.5rem', textAlign: 'center', cursor: 'pointer', background: 'var(--color-background-secondary)' }}>
-              {preview
-                ? <img src={preview} alt="preview" style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '6px', objectFit: 'contain' }} />
-                : <><div style={{ fontSize: '32px', marginBottom: '8px' }}>🧾</div><div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>Drop your invoice here</div><div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>PDF, PNG, JPG · Click to browse</div></>}
-              <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
+        {error && <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '8px 12px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>{error}</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div className="form-group">
+            <label className="form-label">Item *</label>
+            <select value={form.item_id} onChange={e => f('item_id', e.target.value)}>
+              {items.map((i: any) => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div className="form-group">
+              <label className="form-label">Quantity *</label>
+              <input type="number" min={0} step={0.5} value={form.quantity} onChange={e => f('quantity', e.target.value)} autoFocus />
             </div>
-          )}
-
-          {extract.isPending && (
-            <div style={{ background: '#e6f1fb', border: '0.5px solid #85b7eb', borderRadius: '8px', padding: '12px 14px', marginTop: '1rem', fontSize: '13px', color: '#0c447c', textAlign: 'center' }}>
-              🤖 Reading invoice…
+            <div className="form-group">
+              <label className="form-label">Date</label>
+              <input type="date" value={form.log_date} onChange={e => f('log_date', e.target.value)} />
             </div>
-          )}
-
-          {extracted && (
-            <>
-              <div style={{ background: '#eaf3de', border: '0.5px solid #97c459', borderRadius: '8px', padding: '10px 12px', marginBottom: '1rem', fontSize: '13px', color: '#27500a' }}>
-                ✓ Extracted {extracted.lines?.length || 0} lines · {matchedLines.length} matched to inventory items
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '1rem' }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Supplier</label>
-                  <select value={supplierId} onChange={e => setSupplierId(e.target.value)}>
-                    <option value="">Unknown</option>
-                    {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Total amount</label>
-                  <div style={{ fontSize: '15px', fontWeight: 500, padding: '9px 0' }}>
-                    {extracted.total_amount ? `£${parseFloat(extracted.total_amount).toFixed(2)}` : '—'}
-                  </div>
-                </div>
-              </div>
-
-              {matchedLines.length > 0 && (
-                <div style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>
-                    Matched to inventory ({matchedLines.length})
-                  </div>
-                  {matchedLines.map((l: any, i: number) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 80px', gap: '8px', alignItems: 'center', padding: '7px 10px', background: '#eaf3de', borderRadius: '7px', marginBottom: '4px', fontSize: '12px' }}>
-                      <div style={{ fontWeight: 500, color: '#27500a' }}>{l.description}</div>
-                      <div style={{ color: '#3d6b1a' }}>×{l.quantity || '?'}</div>
-                      <div style={{ color: '#3d6b1a' }}>{l.unit_cost ? `£${parseFloat(l.unit_cost).toFixed(2)} ea` : '?'}</div>
-                      <div style={{ fontWeight: 600, color: '#27500a' }}>£{parseFloat(l.line_total || 0).toFixed(2)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {unmatchedLines.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>
-                    Unmatched ({unmatchedLines.length}) — saved for reference
-                  </div>
-                  {unmatchedLines.map((l: any, i: number) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '8px', alignItems: 'center', padding: '7px 10px', background: 'var(--color-background-secondary)', borderRadius: '7px', marginBottom: '4px', fontSize: '12px' }}>
-                      <div style={{ color: 'var(--color-text-secondary)' }}>{l.description}</div>
-                      <div style={{ fontWeight: 500 }}>£{parseFloat(l.line_total || 0).toFixed(2)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Reason</label>
+            <select value={form.reason} onChange={e => f('reason', e.target.value)}>
+              <option value="">Select reason</option>
+              <option value="spoiled">Spoiled / expired</option>
+              <option value="overcooked">Overcooked</option>
+              <option value="over_prepped">Over-prepped</option>
+              <option value="damaged">Damaged in delivery</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Notes</label>
+            <input value={form.notes} onChange={e => f('notes', e.target.value)} placeholder="Optional detail" />
+          </div>
         </div>
-
-        <div style={{ padding: '1rem 1.5rem', borderTop: '0.5px solid #eee', display: 'flex', gap: '8px', flexShrink: 0 }}>
-          {extracted ? (
-            <>
-              <button onClick={handleSave} className="btn-primary" disabled={saving} style={{ flex: 1, padding: '10px' }}>
-                {saving ? 'Saving…' : `Save invoice · update ${matchedLines.length} item costs`}
-              </button>
-              <button onClick={() => { setExtracted(null); setPreview(null); }} style={{ padding: '10px 14px', borderRadius: '8px' }}>Retake</button>
-            </>
-          ) : (
-            <button onClick={onClose} style={{ padding: '10px 14px', borderRadius: '8px' }}>Cancel</button>
-          )}
+        <div style={{ display: 'flex', gap: '8px', marginTop: '1.25rem' }}>
+          <button onClick={save} className="btn-primary" disabled={logWaste.isPending} style={{ flex: 1, padding: '10px' }}>
+            {logWaste.isPending ? 'Logging…' : 'Log waste'}
+          </button>
+          <button onClick={onClose} style={{ padding: '10px 14px', borderRadius: '8px' }}>Cancel</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Main analytics page ───────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'spend' | 'items' | 'invoices';
+type Tab = 'digest' | 'patterns' | 'waste';
 
 export function InventoryAnalyticsPage() {
-  const [tab, setTab] = useState<Tab>('spend');
-  const [showInvoice, setShowInvoice] = useState(false);
-  const [editingCost, setEditingCost] = useState<any | null>(null);
-  const [editingBudget, setEditingBudget] = useState<any | null>(null);
-  const [newCost, setNewCost] = useState('');
-  const [newBudget, setNewBudget] = useState('');
+  const [tab, setTab]           = useState<Tab>('digest');
+  const [showWaste, setShowWaste] = useState(false);
+  const [generatingDigest, setGeneratingDigest] = useState(false);
 
-  const to   = format(new Date(), 'yyyy-MM-dd');
-  const from = format(subWeeks(new Date(), 4), 'yyyy-MM-dd');
+  const thisWeek = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const wasteFrom = format(subWeeks(new Date(), 4), 'yyyy-MM-dd');
 
-  const { data: spendData, isLoading: spendLoading } = useSpend(from, to);
-  const { data: items = [], isLoading: itemsLoading } = useItemCosts();
-  const { data: invoices = [] }  = useInvoices();
-  const { data: budgets = [] }   = useBudgets();
-  const { data: suppliers = [] } = useSuppliers();
-  const updateCost  = useUpdateCost();
-  const saveBudget  = useSaveBudget();
+  const { data: patterns, isLoading: patternsLoading } = usePatterns();
+  const { data: wasteData = [], isLoading: wasteLoading } = useWaste(wasteFrom);
+  const { data: digests = [], isLoading: digestsLoading } = useDigests();
+  const { data: items = [] } = useItems();
+  const generateDigest = useGenerateDigest();
 
-  const totalSpend  = spendData?.total_spend || 0;
-  const overBudget  = (spendData?.by_category || []).filter((c: any) => c.over_budget).length;
-  const priced      = items.filter((i: any) => parseFloat(i.current_unit_cost) > 0).length;
+  const totalWasteCost = wasteData.reduce((s: number, w: any) => s + (w.waste_cost || 0), 0);
+  const overOrderedCount  = patterns?.over_ordered?.length || 0;
+  const underOrderedCount = patterns?.under_ordered?.length || 0;
 
-  async function handleSaveCost() {
-    if (!editingCost || !newCost) return;
-    await updateCost.mutateAsync({ id: editingCost.id, unit_cost: parseFloat(newCost) });
-    setEditingCost(null); setNewCost('');
-  }
-
-  async function handleSaveBudget() {
-    if (!editingBudget || !newBudget) return;
-    await saveBudget.mutateAsync({ category_id: editingBudget.id, weekly_budget: parseFloat(newBudget) });
-    setEditingBudget(null); setNewBudget('');
+  async function handleGenerateDigest() {
+    setGeneratingDigest(true);
+    try { await generateDigest.mutateAsync(thisWeek); }
+    catch (e: any) { alert(e.response?.data?.error || 'Failed to generate digest.'); }
+    finally { setGeneratingDigest(false); }
   }
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Cost analytics</h1>
-          <p className="page-sub">Track spend, item costs, and supplier invoices</p>
+          <h1 className="page-title">Smart analytics</h1>
+          <p className="page-sub">AI-powered ordering patterns, waste tracking, and weekly insights</p>
         </div>
-        <button onClick={() => setShowInvoice(true)} style={{ fontSize: '13px' }}>🧾 Upload invoice</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => setShowWaste(true)} style={{ fontSize: '13px' }}>+ Log waste</button>
+        </div>
       </div>
 
-      {/* Metrics */}
+      {/* Metric cards */}
       <div className="metric-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="metric-card">
-          <div className="metric-label">4-week spend</div>
-          <div className="metric-val" style={{ color: '#C9973A' }}>
-            {spendLoading ? '…' : `£${totalSpend.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          <div className="metric-label">Over-ordered items</div>
+          <div className="metric-val" style={{ color: overOrderedCount > 0 ? '#C9973A' : 'var(--color-text-primary)' }}>{overOrderedCount}</div>
+          <div className="metric-sub">consistently above par level</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Under-ordered items</div>
+          <div className="metric-val" style={{ color: underOrderedCount > 0 ? '#C41E3A' : 'var(--color-text-primary)' }}>{underOrderedCount}</div>
+          <div className="metric-sub">consistently below par level</div>
+        </div>
+        <div className="metric-card">
+          <div className="metric-label">Waste cost (4 weeks)</div>
+          <div className="metric-val" style={{ color: totalWasteCost > 0 ? '#C41E3A' : 'var(--color-text-primary)' }}>
+            {totalWasteCost > 0 ? `£${totalWasteCost.toFixed(2)}` : '—'}
           </div>
-          <div className="metric-sub">from {invoices.length} invoice{invoices.length !== 1 ? 's' : ''}</div>
+          <div className="metric-sub">{wasteData.length > 0 ? `${wasteData.length} items logged` : 'no waste logged'}</div>
         </div>
         <div className="metric-card">
-          <div className="metric-label">Over budget</div>
-          <div className="metric-val" style={{ color: overBudget > 0 ? '#C41E3A' : 'var(--color-text-primary)' }}>{overBudget}</div>
-          <div className="metric-sub">categories this period</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Items priced</div>
-          <div className="metric-val" style={{ color: '#C41E3A' }}>
-            {priced}
-            <span style={{ fontSize: '14px', fontWeight: 400, color: 'var(--color-text-tertiary)' }}>/{items.length}</span>
-          </div>
-          <div className="metric-sub">{items.length - priced > 0 ? `${items.length - priced} still need a cost` : 'all priced'}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Invoices logged</div>
-          <div className="metric-val">{invoices.length}</div>
-          <div className="metric-sub">last 4 weeks</div>
+          <div className="metric-label">AI digests</div>
+          <div className="metric-val">{digests.length}</div>
+          <div className="metric-sub">weekly summaries generated</div>
         </div>
       </div>
 
       {/* Sub tabs */}
       <div style={{ display: 'flex', gap: '0', marginBottom: '1.5rem', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
-        {[{ id: 'spend', label: 'Spend by category' }, { id: 'items', label: 'Item costs' }, { id: 'invoices', label: 'Invoices' }].map((t: any) => (
+        {[
+          { id: 'digest',   label: 'Weekly digest' },
+          { id: 'patterns', label: 'Order patterns' },
+          { id: 'waste',    label: 'Waste tracker' },
+        ].map((t: any) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: '8px 20px', fontSize: '13px', border: 'none', background: 'none', cursor: 'pointer',
             borderBottom: tab === t.id ? '2px solid #C41E3A' : '2px solid transparent',
@@ -303,54 +192,46 @@ export function InventoryAnalyticsPage() {
         ))}
       </div>
 
-      {/* ── Spend tab ──────────────────────────────────────────────────────── */}
-      {tab === 'spend' && (
+      {/* ── Weekly digest tab ─────────────────────────────────────────────── */}
+      {tab === 'digest' && (
         <div>
-          {spendLoading ? (
-            <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '2rem 0' }}>Loading spend data…</div>
-          ) : !spendData || spendData.by_category.length === 0 ? (
+          <div style={{ background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: '8px', padding: '12px 14px', marginBottom: '1.25rem', fontSize: '13px', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '20px' }}>🤖</span>
+            <div style={{ flex: 1 }}>
+              Generate a weekly AI summary of your ordering activity, delivery issues, and waste. Gets smarter as more data accumulates.
+            </div>
+            <button onClick={handleGenerateDigest} disabled={generatingDigest} className="btn-primary" style={{ fontSize: '12px', padding: '6px 14px', whiteSpace: 'nowrap' }}>
+              {generatingDigest ? 'Generating…' : 'Generate this week →'}
+            </button>
+          </div>
+
+          {digestsLoading ? (
+            <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '2rem 0' }}>Loading digests…</div>
+          ) : digests.length === 0 ? (
             <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-              <div style={{ fontSize: '36px', marginBottom: '1rem' }}>🧾</div>
-              <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No spend data yet</div>
-              <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>Upload supplier invoices to start tracking costs by category.</div>
-              <button onClick={() => setShowInvoice(true)} style={{ fontSize: '13px' }}>🧾 Upload first invoice</button>
+              <div style={{ fontSize: '40px', marginBottom: '1rem' }}>📊</div>
+              <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No digests yet</div>
+              <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
+                Generate your first weekly digest above. Works best with at least 2 weeks of orders and deliveries.
+              </div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {/* Budget info banner */}
-              <div style={{ background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                Showing 4-week spend ({from} to {to}). Set weekly budgets per category on the Item costs tab.
-              </div>
-
-              {spendData.by_category.map((cat: any) => {
-                const colors = COLOR_MAP[cat.color] || COLOR_MAP.gray;
-                const pct = cat.budget_pct;
-                const barColor = !pct ? '#97c459' : pct > 100 ? '#C41E3A' : pct > 85 ? '#ef9f27' : '#97c459';
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {digests.map((digest: any) => {
+                const weekEnd = format(addWeeks(parseISO(digest.week_start), 1), 'd MMM');
                 return (
-                  <div key={cat.category_id} className="card" style={{ padding: '14px 16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '18px' }}>{cat.icon}</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{cat.category_name}</div>
-                        {cat.weekly_budget && <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>Budget: £{(cat.weekly_budget * spendData.weeks_in_range).toFixed(0)} over {spendData.weeks_in_range} weeks</div>}
+                  <div key={digest.id} className="card">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Week of {format(parseISO(digest.week_start), 'd MMM')} – {weekEnd}
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '16px', fontWeight: 600, color: cat.over_budget ? '#C41E3A' : 'var(--color-text-primary)' }}>
-                          £{parseFloat(cat.total).toFixed(2)}
-                        </div>
-                        {pct !== null && (
-                          <div style={{ fontSize: '11px', color: cat.over_budget ? '#9e1830' : 'var(--color-text-tertiary)' }}>
-                            {pct}% of budget{cat.over_budget ? ' ⚠ over' : ''}
-                          </div>
-                        )}
+                      <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', marginLeft: 'auto' }}>
+                        Generated {format(parseISO(digest.created_at), 'd MMM HH:mm')}
                       </div>
                     </div>
-                    {/* Budget bar */}
-                    {cat.budget_total && (
-                      <div style={{ height: '6px', background: '#f0efe8', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: barColor, borderRadius: '3px', transition: 'width 0.3s' }} />
-                      </div>
-                    )}
+                    <div style={{ fontSize: '13px', lineHeight: 1.8, color: 'var(--color-text-primary)', whiteSpace: 'pre-line' }}>
+                      {digest.content}
+                    </div>
                   </div>
                 );
               })}
@@ -359,98 +240,171 @@ export function InventoryAnalyticsPage() {
         </div>
       )}
 
-      {/* ── Item costs tab ─────────────────────────────────────────────────── */}
-      {tab === 'items' && (
+      {/* ── Order patterns tab ────────────────────────────────────────────── */}
+      {tab === 'patterns' && (
         <div>
-          {items.length - priced > 0 && (
-            <div style={{ background: '#faeeda', border: '0.5px solid #ef9f27', borderRadius: '8px', padding: '10px 14px', marginBottom: '1.25rem', fontSize: '13px', color: '#633806' }}>
-              ⚠ {items.length - priced} item{items.length - priced !== 1 ? 's have' : ' has'} no cost set — upload a supplier invoice to auto-populate, or set manually.
+          <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+            Based on your last 8 weeks of submitted orders. Items are flagged when they consistently deviate from par levels.
+          </div>
+
+          {patternsLoading ? (
+            <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '2rem 0' }}>Analysing patterns…</div>
+          ) : !patterns ? null : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+              {/* Over-ordered */}
+              {patterns.over_ordered.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#854f0b', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef9f27', display: 'inline-block' }} />
+                    Consistently over-ordered ({patterns.over_ordered.length})
+                  </div>
+                  <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 100px 120px', padding: '7px 16px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      <div>Item</div><div>Par level</div><div>Avg ordered</div><div>Avg excess</div><div>Orders analysed</div>
+                    </div>
+                    {patterns.over_ordered.map((item: any, idx: number) => (
+                      <div key={item.item_id} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 100px 120px', padding: '11px 16px', borderBottom: idx < patterns.over_ordered.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 500 }}>{item.category_icon} {item.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{item.category_name}</div>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{item.par_level} {item.unit}</div>
+                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{item.avg_qty.toFixed(1)} {item.unit}</div>
+                        <div style={{ fontSize: '12px', color: '#854f0b', fontWeight: 500 }}>+{item.avg_excess.toFixed(1)} {item.unit}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>{item.order_count} orders</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginTop: '6px', fontStyle: 'italic' }}>
+                    Consider raising the par level to match actual ordering patterns, or review whether you need this much.
+                  </div>
+                </div>
+              )}
+
+              {/* Under-ordered */}
+              {patterns.under_ordered.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#9e1830', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#C41E3A', display: 'inline-block' }} />
+                    Consistently under-ordered ({patterns.under_ordered.length})
+                  </div>
+                  <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 110px 120px', padding: '7px 16px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      <div>Item</div><div>Par level</div><div>Avg ordered</div><div>Avg shortfall</div><div>Orders analysed</div>
+                    </div>
+                    {patterns.under_ordered.map((item: any, idx: number) => (
+                      <div key={item.item_id} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 110px 120px', padding: '11px 16px', borderBottom: idx < patterns.under_ordered.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 500 }}>{item.category_icon} {item.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{item.category_name}</div>
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{item.par_level} {item.unit}</div>
+                        <div style={{ fontSize: '13px', fontWeight: 500 }}>{item.avg_qty.toFixed(1)} {item.unit}</div>
+                        <div style={{ fontSize: '12px', color: '#9e1830', fontWeight: 500 }}>−{item.avg_shortfall.toFixed(1)} {item.unit}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>{item.order_count} orders</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginTop: '6px', fontStyle: 'italic' }}>
+                    Consider lowering the par level — or check if these items are running out mid-week.
+                  </div>
+                </div>
+              )}
+
+              {/* Supplier shortfalls */}
+              {patterns.supplier_shortfalls.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#633806', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef9f27', display: 'inline-block' }} />
+                    Suppliers with repeated shortfalls
+                  </div>
+                  <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    {patterns.supplier_shortfalls.map((s: any, idx: number) => (
+                      <div key={s.supplier_id} style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '11px 16px', borderBottom: idx < patterns.supplier_shortfalls.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none' }}>
+                        <div style={{ flex: 1, fontSize: '13px', fontWeight: 500 }}>{s.supplier_name}</div>
+                        <div style={{ fontSize: '12px', color: '#854f0b' }}>{s.shortfall_count} partial deliveries</div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>{s.total_variance.toFixed(1)} units short total</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {overOrderedCount === 0 && underOrderedCount === 0 && patterns.supplier_shortfalls.length === 0 && (
+                <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+                  <div style={{ fontSize: '36px', marginBottom: '1rem' }}>✓</div>
+                  <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No patterns detected yet</div>
+                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                    Patterns appear after 6+ submitted orders. Keep logging your daily orders and they'll surface here automatically.
+                  </div>
+                </div>
+              )}
             </div>
           )}
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px 100px 100px 120px 80px', padding: '8px 16px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-              <div>Item</div><div>Category</div><div>Unit</div><div>Par level</div><div>Unit cost</div><div>Weekly est.</div>
-            </div>
-            {itemsLoading ? (
-              <div style={{ padding: '2rem', fontSize: '13px', color: 'var(--color-text-tertiary)' }}>Loading…</div>
-            ) : (
-              items.map((item: any, idx: number) => {
-                const hasCost = parseFloat(item.current_unit_cost) > 0;
-                const isEditing = editingCost?.id === item.id;
-                return (
-                  <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px 100px 100px 120px 80px', padding: '11px 16px', borderBottom: idx < items.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none', alignItems: 'center' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 500 }}>{item.name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>{item.category_icon} {item.category_name}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{item.unit}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{item.par_level}</div>
-                    <div>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                          <span style={{ fontSize: '12px' }}>£</span>
-                          <input type="number" min={0} step={0.01} value={newCost} onChange={e => setNewCost(e.target.value)}
-                            style={{ width: '65px', fontSize: '13px', padding: '4px 6px' }} autoFocus
-                            onKeyDown={e => { if (e.key === 'Enter') handleSaveCost(); if (e.key === 'Escape') { setEditingCost(null); setNewCost(''); } }} />
-                          <button onClick={handleSaveCost} style={{ fontSize: '11px', padding: '3px 8px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✓</button>
-                          <button onClick={() => { setEditingCost(null); setNewCost(''); }} style={{ fontSize: '11px', padding: '3px 6px', border: 'none', background: 'none', cursor: 'pointer', color: '#aaa' }}>×</button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontSize: '13px', fontWeight: 500, color: hasCost ? 'var(--color-text-primary)' : '#d0cec6' }}>
-                            {hasCost ? `£${parseFloat(item.current_unit_cost).toFixed(2)}` : '—'}
-                          </span>
-                          <button onClick={() => { setEditingCost(item); setNewCost(hasCost ? String(item.current_unit_cost) : ''); }}
-                            style={{ fontSize: '11px', color: '#C41E3A', border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}>
-                            {hasCost ? 'Edit' : 'Set'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ fontSize: '13px', fontWeight: 500, color: item.weekly_cost_estimate > 0 ? 'var(--color-text-primary)' : '#d0cec6' }}>
-                      {item.weekly_cost_estimate > 0 ? `£${item.weekly_cost_estimate.toFixed(2)}` : '—'}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
         </div>
       )}
 
-      {/* ── Invoices tab ───────────────────────────────────────────────────── */}
-      {tab === 'invoices' && (
-        invoices.length === 0 ? (
-          <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-            <div style={{ fontSize: '40px', marginBottom: '1rem' }}>🧾</div>
-            <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No invoices yet</div>
-            <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
-              Upload your first supplier invoice. The AI will extract line items and automatically update unit costs.
+      {/* ── Waste tab ─────────────────────────────────────────────────────── */}
+      {tab === 'waste' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+              Last 4 weeks · {format(parseISO(wasteFrom), 'd MMM')} to today
             </div>
-            <button onClick={() => setShowInvoice(true)} style={{ fontSize: '13px' }}>🧾 Upload invoice</button>
+            <button onClick={() => setShowWaste(true)} style={{ fontSize: '13px' }}>+ Log waste</button>
           </div>
-        ) : (
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 100px 100px 110px 120px', padding: '8px 16px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-              <div>Supplier</div><div>Date</div><div>Ref</div><div>Lines</div><div>Total</div><div>Status</div>
-            </div>
-            {invoices.map((inv: any, idx: number) => (
-              <div key={inv.id} style={{ display: 'grid', gridTemplateColumns: '1fr 140px 100px 100px 110px 120px', padding: '12px 16px', borderBottom: idx < invoices.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none', alignItems: 'center' }}>
-                <div style={{ fontSize: '13px', fontWeight: 500 }}>{inv.supplier_name || 'Unknown'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{format(parseISO(inv.invoice_date), 'd MMM yyyy')}</div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{inv.invoice_ref || '—'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{inv.line_count || '—'}</div>
-                <div style={{ fontSize: '13px', fontWeight: 500 }}>{inv.total_amount ? `£${parseFloat(inv.total_amount).toFixed(2)}` : '—'}</div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 500, background: inv.status === 'pending' ? '#faeeda' : '#eaf3de', color: inv.status === 'pending' ? '#633806' : '#27500a', padding: '2px 8px', borderRadius: '20px' }}>
-                    {inv.status === 'pending' ? 'Saved' : 'Matched'}
-                  </span>
-                </div>
+
+          {wasteLoading ? (
+            <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '2rem 0' }}>Loading…</div>
+          ) : wasteData.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+              <div style={{ fontSize: '36px', marginBottom: '1rem' }}>♻️</div>
+              <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '0.5rem' }}>No waste logged</div>
+              <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '1.5rem' }}>
+                Log waste when items spoil or are over-prepped. This improves your AI order recommendations and helps reduce costs.
               </div>
-            ))}
-          </div>
-        )
+              <button onClick={() => setShowWaste(true)} style={{ fontSize: '13px' }}>+ Log first waste entry</button>
+            </div>
+          ) : (
+            <div>
+              {totalWasteCost > 0 && (
+                <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '10px 14px', marginBottom: '1.25rem', fontSize: '13px', color: '#9e1830' }}>
+                  Total estimated waste cost: <strong>£{totalWasteCost.toFixed(2)}</strong> in the last 4 weeks
+                </div>
+              )}
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px 100px 100px 100px', padding: '7px 16px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: '10px', fontWeight: 500, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  <div>Item</div><div>Category</div><div>Total waste</div><div>Est. cost</div><div>Log entries</div>
+                </div>
+                {wasteData.map((w: any, idx: number) => {
+                  const colors = COLOR_MAP[w.category_color] || COLOR_MAP.gray;
+                  return (
+                    <div key={w.item_id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px 100px 100px 100px', padding: '11px 16px', borderBottom: idx < wasteData.length - 1 ? '0.5px solid var(--color-border-tertiary)' : 'none', alignItems: 'center' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 500 }}>{w.name}</div>
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: 500, background: colors.bg, color: colors.text, padding: '2px 7px', borderRadius: '20px' }}>
+                          {w.category_icon} {w.category_name}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', fontWeight: 500, color: '#9e1830' }}>{w.total_waste.toFixed(1)} {w.unit}</div>
+                      <div style={{ fontSize: '13px', fontWeight: 500, color: w.waste_cost > 0 ? '#9e1830' : '#d0cec6' }}>
+                        {w.waste_cost > 0 ? `£${w.waste_cost.toFixed(2)}` : '—'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>{w.log_count}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginTop: '8px', fontStyle: 'italic' }}>
+                Waste data feeds into the AI order recommendations — items with high waste rates get reduced suggested quantities.
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
-      {showInvoice && <InvoiceModal suppliers={suppliers} onClose={() => setShowInvoice(false)} />}
+      {showWaste && <WasteModal items={items} onClose={() => setShowWaste(false)} />}
     </div>
   );
 }
