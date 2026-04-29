@@ -87,7 +87,7 @@ router.get('/items', authenticate, async (req, res, next) => {
       );
 
     // Compute stock status
-    const withStatus = items.map(item => {
+    const withStatus = items.map((item: any) => {
       const stock = parseFloat(String(item.current_stock)) || 0;
       const par   = parseFloat(String(item.par_level)) || 0;
       const ratio = par > 0 ? stock / par : 1;
