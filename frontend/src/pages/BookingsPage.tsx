@@ -259,11 +259,11 @@ function TableSetupModal({ onClose }: { onClose: () => void }) {
               {sections.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', fontSize: '13px', color: 'var(--color-text-tertiary)' }}>No tables yet — add your first table above or upload a floor plan.</div>
               ) : (
-                sections.map(section => {
+                sections.map((section: any) => {
                   const sectionTables = tables.filter((t: any) => t.section === section);
                   return (
-                    <div key={section} style={{ marginBottom: '12px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>{section}</div>
+                    <div key={String(section)} style={{ marginBottom: '12px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>{String(section)}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         {sectionTables.map((t: any) => (
                           <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--color-background-secondary)', borderRadius: '7px', fontSize: '13px' }}>
@@ -411,11 +411,11 @@ function BookingDetailModal({ booking, tables, onClose }: { booking: any; tables
                 </span>
               )}
             </div>
-            {sections.map(section => {
+            {sections.map((section: any) => {
               const sectionTables = tables.filter((t: any) => t.section === section);
               return (
-                <div key={section} style={{ marginBottom: '8px' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '5px' }}>{section}</div>
+                <div key={String(section)} style={{ marginBottom: '8px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '5px' }}>{String(section)}</div>
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {sectionTables.map((t: any) => {
                       const isSelected = selectedTables.includes(t.id);
