@@ -285,11 +285,38 @@ export function FloorPlanPage() {
   const [hoveredId, setHoveredId]     = useState<string | null>(null);
   const [savedMsg, setSavedMsg]       = useState('');
 
-  // Drag state
-  const dragging = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  // Drag state — use native window events to cover entire screen
+  const dragging = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [dragId, setDragId]       = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Attach window-level drag listeners once
+  useEffect(() => {
+    function onWindowMouseMove(e: MouseEvent) {
+      const d = dragging.current;
+      if (!d || !svgRef.current) return;
+      const svgRect = svgRef.current.getBoundingClientRect();
+      const scaleX = CANVAS_W / svgRect.width;
+      const scaleY = CANVAS_H / svgRect.height;
+      const mouseXInSvg = (e.clientX - svgRect.left) * scaleX;
+      const mouseYInSvg = (e.clientY - svgRect.top)  * scaleY;
+      const newX = Math.max(0, Math.min(CANVAS_W - TABLE_W, mouseXInSvg - d.offsetX));
+      const newY = Math.max(0, Math.min(CANVAS_H - TABLE_H, mouseYInSvg - d.offsetY));
+      // Update via ref to avoid stale closure crash
+      setPositions(p => ({ ...p, [d.id]: { x: newX, y: newY } }));
+    }
+    function onWindowMouseUp() {
+      dragging.current = null;
+      setDragId(null);
+    }
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup',   onWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onWindowMouseMove);
+      window.removeEventListener('mouseup',   onWindowMouseUp);
+    };
+  }, []);
 
   const { data: floorData } = useFloorPlan(date, time);
   const { data: rawTables = [] } = useTables();
@@ -375,43 +402,22 @@ export function FloorPlanPage() {
     if (!editMode) return;
     e.preventDefault();
     e.stopPropagation();
-    // Store offset from table origin to mouse click point in SVG coords
     const svgRect = svgRef.current!.getBoundingClientRect();
     const scaleX = CANVAS_W / svgRect.width;
     const scaleY = CANVAS_H / svgRect.height;
     const t = tables.find((t: any) => t.id === tableId)!;
     const mouseXInSvg = (e.clientX - svgRect.left) * scaleX;
-    const mouseYInSvg = (e.clientY - svgRect.top) * scaleY;
+    const mouseYInSvg = (e.clientY - svgRect.top)  * scaleY;
+    // Store offset from mouse to table top-left corner
     dragging.current = {
       id: tableId,
-      startX: e.clientX,
-      startY: e.clientY,
-      // Offset: where within the table the user clicked
-      origX: mouseXInSvg - t.pos_x,
-      origY: mouseYInSvg - t.pos_y,
+      offsetX: mouseXInSvg - (t.pos_x ?? 0),
+      offsetY: mouseYInSvg - (t.pos_y ?? 0),
     };
     setDragId(tableId);
   }
 
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (!dragging.current?.id || !svgRef.current) return;
-    e.preventDefault();
-    const svgRect = svgRef.current.getBoundingClientRect();
-    const scaleX = CANVAS_W / svgRect.width;
-    const scaleY = CANVAS_H / svgRect.height;
-    // Absolute position: mouse in SVG coords minus the click-offset
-    const mouseXInSvg = (e.clientX - svgRect.left) * scaleX;
-    const mouseYInSvg = (e.clientY - svgRect.top) * scaleY;
-    const newX = Math.max(0, Math.min(CANVAS_W - TABLE_W, mouseXInSvg - dragging.current.origX));
-    const newY = Math.max(0, Math.min(CANVAS_H - TABLE_H, mouseYInSvg - dragging.current.origY));
-    setPositions(p => ({ ...p, [dragging.current!.id]: { x: newX, y: newY } }));
-  }, []);
-
-  const onMouseUp = useCallback(() => {
-    if (!dragging.current) { setDragId(null); return; }
-    setDragId(null);
-    dragging.current = null;
-  }, []);
+  // Mouse move/up handled by window listeners (see useEffect above)
 
   // ── Auto layout ──────────────────────────────────────────────────────────────
 
@@ -613,14 +619,13 @@ export function FloorPlanPage() {
       )}
 
       {/* ── Canvas ─────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflow: 'hidden', padding: '16px' }}>
+      <div style={{ flex: 1, overflow: 'hidden', padding: '16px', minHeight: 0 }}>
         <svg
           ref={svgRef}
           viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-          style={{ width: '100%', height: '100%', background: '#111110', borderRadius: '12px', border: '0.5px solid #222' }}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ width: '100%', height: '100%', display: 'block', background: '#111110', borderRadius: '12px', border: '0.5px solid #222', userSelect: 'none' }}
+
         >
           {/* Grid dots */}
           <defs>
