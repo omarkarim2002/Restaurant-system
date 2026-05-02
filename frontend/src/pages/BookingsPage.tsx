@@ -102,11 +102,11 @@ function FloorPlan({ tables, selectedIds, onToggle, highlightIds }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {sections.map(section => {
+      {sections.map((section: any) => {
         const sectionTables = tables.filter((t: any) => t.section === section);
         return (
-          <div key={section}>
-            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '8px' }}>{section}</div>
+          <div key={String(section)}>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '8px' }}>{String(section)}</div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {sectionTables.map((t: any) => {
                 const isFree      = t.is_free !== false;
@@ -433,9 +433,9 @@ function TableSetupModal({ onClose }: { onClose: () => void }) {
                 <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Shape</label><select value={newTable.shape} onChange={e => setNewTable(p => ({ ...p, shape: e.target.value }))}><option value="rectangle">Rectangle</option><option value="round">Round</option></select></div>
                 <button onClick={addTable} className="btn-primary" disabled={createTable.isPending} style={{ padding: '8px', fontSize: '13px' }}>+ Add</button>
               </div>
-              {sections.length === 0 ? <div style={{ textAlign: 'center', padding: '2rem', fontSize: '13px', color: 'var(--color-text-tertiary)' }}>No tables yet.</div> : sections.map(section => (
-                <div key={section} style={{ marginBottom: '12px' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>{section}</div>
+              {sections.length === 0 ? <div style={{ textAlign: 'center', padding: '2rem', fontSize: '13px', color: 'var(--color-text-tertiary)' }}>No tables yet.</div> : sections.map((section: any) => (
+                <div key={String(section)} style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>{String(section)}</div>
                   {tables.filter((t: any) => t.section === section).map((t: any) => (
                     <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--color-background-secondary)', borderRadius: '7px', marginBottom: '4px', fontSize: '13px' }}>
                       <div style={{ fontWeight: 500, flex: 1 }}>{t.name}</div>
