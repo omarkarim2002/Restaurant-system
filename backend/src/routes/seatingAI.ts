@@ -300,4 +300,103 @@ router.get('/floor-plan', authenticate, async (req, res, next) => {
 });
 
 export { getTableAvailability, generateSeatingOptions };
+
+// ── POST /bookings/seating/block-recommend ────────────────────────────────────
+// Haiku analyses the day's bookings and recommends which tables to block
+// to consolidate covers and free up staff from running the whole floor.
+
+router.post('/block-recommend', authenticate, async (req, res, next) => {
+  try {
+    const { date, tables, bookings, total_covers } = req.body;
+    if (!tables?.length) throw new AppError('tables required', 422);
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new AppError('Anthropic API key not configured', 500);
+
+    const freeTables  = tables.filter((t: any) => t.is_free);
+    const bookedTables = tables.filter((t: any) => !t.is_free);
+
+    const tableList = tables.map((t: any) =>
+      `- ${t.name}: ${t.capacity} seats, ${t.section} section${!t.is_free ? ' [BOOKED]' : ''}`
+    ).join('\n');
+
+    const bookingList = (bookings || []).map((b: any) =>
+      `- Party of ${b.party_size} at ${b.booking_time || '?'} (${b.status})${b.tables ? ` → ${b.tables.join(', ')}` : ''}`
+    ).join('\n') || 'No bookings yet';
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 800,
+        messages: [{
+          role: 'user',
+          content: `You are a restaurant floor manager. Recommend which tables to block off for today to make the floor more efficient.
+
+Date: ${date}
+Total covers booked: ${total_covers}
+Total free tables: ${freeTables.length}
+
+All tables:
+${tableList}
+
+Today's bookings:
+${bookingList}
+
+Goals:
+1. Make sure all booked covers can be seated comfortably
+2. Consolidate open tables into a smaller area when it's quiet — saves staff running the whole floor
+3. Block tables that are far from booked tables, awkward to serve alone, or too small/large to be useful
+4. Never block a table that already has a booking
+
+Return ONLY a JSON object, no other text:
+{
+  "summary": "One sentence explaining the recommendation",
+  "block": [
+    { "table_id": "...", "table_name": "Table X", "capacity": 4, "reason": "Brief reason" }
+  ],
+  "keep_open": [
+    { "table_id": "...", "table_name": "Table Y", "capacity": 6 }
+  ]
+}
+
+Only recommend blocking truly free tables. If it's a busy day with ${total_covers}+ covers, suggest blocking fewer tables.`,
+        }],
+      }),
+    });
+
+    if (!response.ok) throw new AppError('AI recommendation failed', 500);
+    const data = await response.json() as any;
+    const text = data.content?.[0]?.text || '{}';
+
+    let result: any = {};
+    try { result = JSON.parse(text.replace(/```json|```/g, '').trim()); }
+    catch { throw new AppError('Could not parse AI response', 422); }
+
+    // Resolve table_ids — Haiku may not know the UUIDs, match by name
+    const nameToTable: Record<string, any> = {};
+    for (const t of tables) nameToTable[t.name] = t;
+
+    if (result.block) {
+      result.block = result.block.map((b: any) => ({
+        ...b,
+        table_id: nameToTable[b.table_name]?.id || b.table_id,
+        capacity: nameToTable[b.table_name]?.capacity || b.capacity,
+      })).filter((b: any) => b.table_id);
+    }
+
+    if (result.keep_open) {
+      result.keep_open = result.keep_open.map((k: any) => ({
+        ...k,
+        table_id: nameToTable[k.table_name]?.id || k.table_id,
+      }));
+    }
+
+    res.json({ data: result });
+  } catch (err) { next(err); }
+});
+
+
+export { getTableAvailability, generateSeatingOptions };
 export default router;
