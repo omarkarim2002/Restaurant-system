@@ -14,6 +14,7 @@ import { InventoryOrderPage } from './pages/InventoryOrderPage';
 import { InventoryDeliveriesPage } from './pages/InventoryDeliveriesPage';
 import { InventoryAnalyticsPage } from './pages/InventoryAnalyticsPage';
 import { BookingsPage } from './pages/BookingsPage';
+import { BookingsAnalyticsPage } from './pages/BookingsAnalyticsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/inventory/order"        element={<ProtectedRoute><InventoryOrderPage /></ProtectedRoute>} />
           <Route path="/inventory/deliveries"   element={<ProtectedRoute><InventoryDeliveriesPage /></ProtectedRoute>} />
           <Route path="/bookings" element={<ProtectedRoute><BookingsPage /></ProtectedRoute>} />
+          <Route path="/bookings/analytics" element={<ProtectedRoute><BookingsAnalyticsPage /></ProtectedRoute>} />
           <Route path="/inventory/analytics"    element={<ProtectedRoute><InventoryAnalyticsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
