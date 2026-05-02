@@ -58,39 +58,103 @@ function useGenerate(id: string) {
 }
 
 // ── New template modal ─────────────────────────────────────────────────────────
+function useCreateSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: any) => api.post('/inventory/suppliers', b).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+  });
+}
+
 function NewTemplateModal({ onClose }: { onClose: () => void }) {
   const { data: suppliers = [] } = useSuppliers();
   const create = useCreate();
+  const createSupplier = useCreateSupplier();
   const [form, setForm] = useState({ supplier_id: '', name: '', day_of_week: 1, notes: '' });
+  const [newSupplier, setNewSupplier] = useState(false);
+  const [supplierForm, setSupplierForm] = useState({ name: '', contact_phone: '', contact_email: '' });
   const [error, setError] = useState('');
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
+
+  async function handleCreateSupplier() {
+    if (!supplierForm.name) { setError('Supplier name is required.'); return; }
+    setCreatingSupplier(true);
+    try {
+      const result = await createSupplier.mutateAsync(supplierForm);
+      const newId = result.data?.id || result.id;
+      setForm(p => ({ ...p, supplier_id: newId }));
+      setNewSupplier(false);
+      setSupplierForm({ name: '', contact_phone: '', contact_email: '' });
+      setError('');
+    } catch (e: any) { setError(e.response?.data?.error || 'Failed to create supplier.'); }
+    finally { setCreatingSupplier(false); }
+  }
 
   async function handleSubmit() {
     if (!form.supplier_id || !form.name) { setError('Supplier and name are required.'); return; }
     try {
       const result = await create.mutateAsync({ ...form, lines: [] });
       onClose();
-      // Navigate to detail
       window.location.hash = `#/inventory/recurring/${result.data.id}`;
     } catch (e: any) { setError(e.response?.data?.error || 'Failed to create.'); }
   }
 
+  const selectedSupplier = suppliers.find((s: any) => s.id === form.supplier_id);
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-      <div style={{ background: 'white', borderRadius: '16px', width: '460px', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+      <div style={{ background: 'white', borderRadius: '16px', width: '480px', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
         <div style={{ padding: '1.25rem 1.5rem 1rem', borderBottom: '0.5px solid #eee', display: 'flex', justifyContent: 'space-between' }}>
           <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>New recurring order</h3>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#aaa', cursor: 'pointer' }}>×</button>
         </div>
         <div style={{ padding: '1.25rem 1.5rem' }}>
           {error && <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '8px 12px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>{error}</div>}
-          <div className="form-group"><label className="form-label">Supplier *</label>
-            <select value={form.supplier_id} onChange={e => setForm(p => ({ ...p, supplier_id: e.target.value }))}>
-              <option value="">Select supplier…</option>
-              {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+
+          {/* Supplier selector */}
+          <div className="form-group">
+            <label className="form-label">Supplier *</label>
+            {!newSupplier ? (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <select value={form.supplier_id} onChange={e => setForm(p => ({ ...p, supplier_id: e.target.value }))} style={{ flex: 1 }}>
+                  <option value="">Select supplier…</option>
+                  {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <button type="button" onClick={() => { setNewSupplier(true); setForm(p => ({ ...p, supplier_id: '' })); }}
+                  style={{ fontSize: '12px', padding: '7px 10px', background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-secondary)', borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap', color: 'var(--color-text-secondary)' }}>
+                  + New
+                </button>
+              </div>
+            ) : (
+              <div style={{ background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-secondary)', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '10px' }}>New supplier</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <input value={supplierForm.name} onChange={e => setSupplierForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Supplier name *" autoFocus style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <input value={supplierForm.contact_phone} onChange={e => setSupplierForm(p => ({ ...p, contact_phone: e.target.value }))}
+                    placeholder="Phone (optional)" style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <input value={supplierForm.contact_email} onChange={e => setSupplierForm(p => ({ ...p, contact_email: e.target.value }))}
+                    placeholder="Email (optional)" style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                    <button type="button" onClick={handleCreateSupplier} disabled={creatingSupplier || !supplierForm.name}
+                      style={{ flex: 1, padding: '7px', fontSize: '12px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer', fontWeight: 500, opacity: !supplierForm.name ? 0.5 : 1 }}>
+                      {creatingSupplier ? 'Adding…' : 'Add supplier'}
+                    </button>
+                    <button type="button" onClick={() => { setNewSupplier(false); setSupplierForm({ name: '', contact_phone: '', contact_email: '' }); setError(''); }}
+                      style={{ padding: '7px 12px', fontSize: '12px', borderRadius: '7px', cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {selectedSupplier && !newSupplier && (
+              <div style={{ fontSize: '11px', color: '#27500a', marginTop: '4px' }}>✓ {selectedSupplier.name}{selectedSupplier.contact_phone ? ` · ${selectedSupplier.contact_phone}` : ''}</div>
+            )}
           </div>
-          <div className="form-group"><label className="form-label">Name *</label>
-            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Bidfood weekly produce" autoFocus />
+
+          <div className="form-group"><label className="form-label">Order name *</label>
+            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Bidfood weekly produce" />
           </div>
           <div className="form-group"><label className="form-label">Delivery day *</label>
             <select value={form.day_of_week} onChange={e => setForm(p => ({ ...p, day_of_week: parseInt(e.target.value) }))}>
@@ -98,11 +162,11 @@ function NewTemplateModal({ onClose }: { onClose: () => void }) {
             </select>
           </div>
           <div className="form-group"><label className="form-label">Notes</label>
-            <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Order cut-off times, special instructions…" rows={3} />
+            <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Cut-off times, special instructions…" rows={2} />
           </div>
         </div>
         <div style={{ padding: '1rem 1.5rem', borderTop: '0.5px solid #eee', display: 'flex', gap: '8px' }}>
-          <button onClick={handleSubmit} className="btn-primary" disabled={create.isPending} style={{ flex: 1 }}>
+          <button onClick={handleSubmit} className="btn-primary" disabled={create.isPending || newSupplier} style={{ flex: 1, opacity: newSupplier ? 0.5 : 1 }}>
             {create.isPending ? 'Creating…' : 'Create + add items →'}
           </button>
           <button onClick={onClose} style={{ padding: '8px 14px', borderRadius: '8px' }}>Cancel</button>
