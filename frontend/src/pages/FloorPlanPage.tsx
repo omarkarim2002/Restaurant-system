@@ -374,29 +374,36 @@ export function FloorPlanPage() {
   function onTableMouseDown(e: React.MouseEvent, tableId: string) {
     if (!editMode) return;
     e.preventDefault();
+    e.stopPropagation();
+    // Store offset from table origin to mouse click point in SVG coords
     const svgRect = svgRef.current!.getBoundingClientRect();
     const scaleX = CANVAS_W / svgRect.width;
     const scaleY = CANVAS_H / svgRect.height;
     const t = tables.find((t: any) => t.id === tableId)!;
+    const mouseXInSvg = (e.clientX - svgRect.left) * scaleX;
+    const mouseYInSvg = (e.clientY - svgRect.top) * scaleY;
     dragging.current = {
       id: tableId,
       startX: e.clientX,
       startY: e.clientY,
-      origX: t.pos_x,
-      origY: t.pos_y,
+      // Offset: where within the table the user clicked
+      origX: mouseXInSvg - t.pos_x,
+      origY: mouseYInSvg - t.pos_y,
     };
     setDragId(tableId);
   }
 
   const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     if (!dragging.current?.id || !svgRef.current) return;
+    e.preventDefault();
     const svgRect = svgRef.current.getBoundingClientRect();
     const scaleX = CANVAS_W / svgRect.width;
     const scaleY = CANVAS_H / svgRect.height;
-    const dx = (e.clientX - dragging.current.startX) * scaleX;
-    const dy = (e.clientY - dragging.current.startY) * scaleY;
-    const newX = Math.max(0, Math.min(CANVAS_W - TABLE_W, dragging.current.origX + dx));
-    const newY = Math.max(0, Math.min(CANVAS_H - TABLE_H, dragging.current.origY + dy));
+    // Absolute position: mouse in SVG coords minus the click-offset
+    const mouseXInSvg = (e.clientX - svgRect.left) * scaleX;
+    const mouseYInSvg = (e.clientY - svgRect.top) * scaleY;
+    const newX = Math.max(0, Math.min(CANVAS_W - TABLE_W, mouseXInSvg - dragging.current.origX));
+    const newY = Math.max(0, Math.min(CANVAS_H - TABLE_H, mouseYInSvg - dragging.current.origY));
     setPositions(p => ({ ...p, [dragging.current!.id]: { x: newX, y: newY } }));
   }, []);
 
@@ -405,6 +412,37 @@ export function FloorPlanPage() {
     setDragId(null);
     dragging.current = null;
   }, []);
+
+  // ── Auto layout ──────────────────────────────────────────────────────────────
+
+  function autoLayout() {
+    // Group by section, then arrange each section in a cluster
+    const sections = [...new Set(tables.map((t: any) => t.section as string))];
+    const sectionCols = Math.ceil(Math.sqrt(sections.length));
+    const sectionW = Math.floor(CANVAS_W / sectionCols);
+    const newPositions: Record<string, { x: number; y: number }> = {};
+
+    sections.forEach((section, si) => {
+      const secTables = tables.filter((t: any) => t.section === section);
+      const sCol = si % sectionCols;
+      const sRow = Math.floor(si / sectionCols);
+      const sectionH = Math.floor(CANVAS_H / Math.ceil(sections.length / sectionCols));
+      const originX = sCol * sectionW + 20;
+      const originY = sRow * sectionH + 40;
+      const cols = Math.ceil(Math.sqrt(secTables.length));
+
+      secTables.forEach((t: any, ti: number) => {
+        const col = ti % cols;
+        const row = Math.floor(ti / cols);
+        newPositions[t.id] = {
+          x: Math.min(CANVAS_W - TABLE_W - 10, originX + col * (TABLE_W + 24)),
+          y: Math.min(CANVAS_H - TABLE_H - 10, originY + row * (TABLE_H + 36)),
+        };
+      });
+    });
+
+    setPositions(newPositions);
+  }
 
   // ── Save layout ───────────────────────────────────────────────────────────────
 
@@ -580,17 +618,21 @@ export function FloorPlanPage() {
           ref={svgRef}
           viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
           style={{ width: '100%', height: '100%', background: '#111110', borderRadius: '12px', border: '0.5px solid #222' }}
-          onMouseMove={editMode ? onMouseMove : undefined}
-          onMouseUp={editMode ? onMouseUp : undefined}
-          onMouseLeave={editMode ? onMouseUp : undefined}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
         >
           {/* Grid dots */}
           <defs>
-            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <circle cx="40" cy="40" r="0.8" fill="#1f1f1d" />
+            <pattern id="dots" width="40" height="40" patternUnits="userSpaceOnUse">
+              <circle cx="20" cy="20" r="1.2" fill={editMode ? "#3a3a36" : "#1f1f1d"} />
             </pattern>
           </defs>
-          <rect width={CANVAS_W} height={CANVAS_H} fill="url(#grid)" />
+          <rect width={CANVAS_W} height={CANVAS_H} fill="url(#dots)" />
+          {editMode && (
+            <rect width={CANVAS_W} height={CANVAS_H} fill="none" stroke="#C9973A" strokeWidth="1.5"
+              strokeDasharray="8 4" rx="10" opacity="0.3" />
+          )}
 
           {/* Combine pair overlays */}
           {combinedPairs.map((pair, i) => {
