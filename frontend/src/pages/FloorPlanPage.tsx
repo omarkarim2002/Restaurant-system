@@ -44,7 +44,7 @@ function useBlockRecommendations() {
   return useMutation({ mutationFn: (body: any) => api.post('/bookings/seating/block-recommend', body).then(r => r.data.data) });
 }
 function useAdjacencies() {
-  return useQuery({ queryKey: ['adjacencies'], queryFn: () => api.get('/bookings/tables/adjacencies-all').then(r => r.data.data), staleTime: 60_000 });
+  return useQuery({ queryKey: ['adjacencies'], queryFn: () => api.get('/bookings/seating/adjacencies-all').then(r => r.data.data), staleTime: 60_000 });
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -312,16 +312,28 @@ export function FloorPlanPage() {
     pos_y: positions[t.id]?.y ?? parseFloat(t.pos_y) ?? 50,
   }));
 
-  // Initialise positions from DB
+  // Initialise positions from DB — auto-spread if all stacked at origin
   useEffect(() => {
+    if (!rawTables.length) return;
     const init: Record<string, { x: number; y: number }> = {};
+    let allAtOrigin = true;
     for (const t of rawTables) {
-      if (!(t.id in positions)) {
-        init[t.id] = { x: parseFloat(t.pos_x) || 50, y: parseFloat(t.pos_y) || 50 };
-      }
+      const x = parseFloat(t.pos_x);
+      const y = parseFloat(t.pos_y);
+      if (x > 5 || y > 5) allAtOrigin = false;
+      init[t.id] = { x: isNaN(x) || x === 0 ? 0 : x, y: isNaN(y) || y === 0 ? 0 : y };
     }
-    if (Object.keys(init).length > 0) setPositions(p => ({ ...p, ...init }));
-  }, [rawTables]);
+    // If everything is at 0,0 auto-arrange in a grid
+    if (allAtOrigin) {
+      const cols = Math.ceil(Math.sqrt(rawTables.length));
+      rawTables.forEach((t: any, i: number) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        init[t.id] = { x: 40 + col * (TABLE_W + 30), y: 40 + row * (TABLE_H + 40) };
+      });
+    }
+    setPositions(init);
+  }, [rawTables.map((t: any) => t.id).join(',')]);
 
   // Adjacency pairs as sets of IDs
   const adjPairs: string[][] = adjData.map((a: any) => [a.table_a, a.table_b]);
@@ -377,7 +389,7 @@ export function FloorPlanPage() {
   }
 
   const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (!dragging.current || !svgRef.current) return;
+    if (!dragging.current?.id || !svgRef.current) return;
     const svgRect = svgRef.current.getBoundingClientRect();
     const scaleX = CANVAS_W / svgRect.width;
     const scaleY = CANVAS_H / svgRect.height;
@@ -389,7 +401,7 @@ export function FloorPlanPage() {
   }, []);
 
   const onMouseUp = useCallback(() => {
-    if (!dragging.current) return;
+    if (!dragging.current) { setDragId(null); return; }
     setDragId(null);
     dragging.current = null;
   }, []);
