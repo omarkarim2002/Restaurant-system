@@ -16,6 +16,8 @@ import { InventoryAnalyticsPage } from './pages/InventoryAnalyticsPage';
 import { BookingsPage } from './pages/BookingsPage';
 import { BookingsAnalyticsPage } from './pages/BookingsAnalyticsPage';
 import { FloorPlanPage } from './pages/FloorPlanPage';
+import { RecurringOrdersPage } from './pages/RecurringOrdersPage';
+import { ItemRequestsPage } from './pages/ItemRequestsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -44,6 +46,8 @@ export default function App() {
           <Route path="/bookings" element={<ProtectedRoute><BookingsPage /></ProtectedRoute>} />
           <Route path="/bookings/floor-plan" element={<FloorPlanPage />} />
           <Route path="/bookings/analytics" element={<ProtectedRoute><BookingsAnalyticsPage /></ProtectedRoute>} />
+          <Route path="/inventory/recurring" element={<ProtectedRoute><RecurringOrdersPage /></ProtectedRoute>} />
+          <Route path="/inventory/requests" element={<ProtectedRoute><ItemRequestsPage /></ProtectedRoute>} />
           <Route path="/inventory/analytics"    element={<ProtectedRoute><InventoryAnalyticsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
