@@ -160,7 +160,7 @@ function BlockRecommendModal({ tables, bookings, combinedPairs, date, onApply, o
         const res = await recommend.mutateAsync({
           date, total_covers: totalCovers,
           allow_combining: true,
-          tables: tables.map(t => ({
+          tables: tables.map((t: any) => ({
             id: t.id, name: t.name, capacity: t.capacity, section: t.section,
             shape: t.shape, is_free: t.is_free,
           })),
@@ -185,7 +185,7 @@ function BlockRecommendModal({ tables, bookings, combinedPairs, date, onApply, o
           <div>
             <h3 style={{ fontSize: '15px', fontWeight: 500, color: 'white', margin: 0 }}>🤖 AI floor recommendations</h3>
             <div style={{ fontSize: '12px', color: '#666', marginTop: '3px' }}>
-              {format(parseISO(date), 'EEEE d MMMM')} · {totalCovers} covers · {tables.filter(t => t.is_free).length} free tables
+              {format(parseISO(date), 'EEEE d MMMM')} · {totalCovers} covers · {tables.filter((t: any) => t.is_free).length} free tables
             </div>
           </div>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#666', cursor: 'pointer' }}>×</button>
@@ -365,7 +365,7 @@ export function FloorPlanPage() {
     const svgRect = svgRef.current!.getBoundingClientRect();
     const scaleX = CANVAS_W / svgRect.width;
     const scaleY = CANVAS_H / svgRect.height;
-    const t = tables.find(t => t.id === tableId)!;
+    const t = tables.find((t: any) => t.id === tableId)!;
     dragging.current = {
       id: tableId,
       startX: e.clientX,
@@ -399,7 +399,7 @@ export function FloorPlanPage() {
   async function saveLayout() {
     try {
       await Promise.all(
-        tables.map(t => updateTable.mutateAsync({ id: t.id, pos_x: Math.round(t.pos_x), pos_y: Math.round(t.pos_y) }))
+        tables.map((t: any) => updateTable.mutateAsync({ id: t.id, pos_x: Math.round(t.pos_x), pos_y: Math.round(t.pos_y) }))
       );
       setSavedMsg('Layout saved ✓');
       setEditMode(false);
@@ -450,8 +450,8 @@ export function FloorPlanPage() {
   }
 
   // Stats
-  const freeCount    = tables.filter(t => t.is_free && !blockedIds.has(t.id) && !allCombined.has(t.id)).length;
-  const bookedCount  = tables.filter(t => !t.is_free).length;
+  const freeCount    = tables.filter((t: any) => t.is_free && !blockedIds.has(t.id) && !allCombined.has(t.id)).length;
+  const bookedCount  = tables.filter((t: any) => !t.is_free).length;
   const blockedCount = blockedIds.size;
   const combinedCount = combinedPairs.length;
   const totalCovers  = bookings.filter((b: any) => ['confirmed','seated'].includes(b.status)).reduce((s: number, b: any) => s + b.party_size, 0);
@@ -477,7 +477,7 @@ export function FloorPlanPage() {
           style={{ fontSize: '13px', padding: '5px 10px', background: '#252523', border: '0.5px solid #3a3a38', borderRadius: '7px', color: 'white' }} />
         <select value={time} onChange={e => setTime(e.target.value)}
           style={{ fontSize: '13px', padding: '5px 10px', background: '#252523', border: '0.5px solid #3a3a38', borderRadius: '7px', color: 'white' }}>
-          {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+          {TIMES.map((t: any) => <option key={t} value={t}>{t}</option>)}
         </select>
 
         {/* Stats */}
@@ -556,7 +556,7 @@ export function FloorPlanPage() {
             ? '✎ Edit mode — drag tables to reposition them, then click Save layout'
             : combineMode
               ? selectedForCombine
-                ? `⟋ Now click a second table to combine with ${tables.find(t => t.id === selectedForCombine)?.name}`
+                ? `⟋ Now click a second table to combine with ${tables.find((t: any) => t.id === selectedForCombine)?.name}`
                 : '⟋ Click two tables to mark them as combined — click an existing combo to split it'
               : ''}
         </div>
@@ -582,15 +582,15 @@ export function FloorPlanPage() {
 
           {/* Combine pair overlays */}
           {combinedPairs.map((pair, i) => {
-            const tA = tables.find(t => t.id === pair[0]);
-            const tB = tables.find(t => t.id === pair[1]);
+            const tA = tables.find((t: any) => t.id === pair[0]);
+            const tB = tables.find((t: any) => t.id === pair[1]);
             if (!tA || !tB) return null;
             return <CombinedOverlay key={i} tableA={tA} tableB={tB} color="#C9973A" />;
           })}
 
           {/* Selected-for-combine highlight */}
           {selectedForCombine && (() => {
-            const t = tables.find(t => t.id === selectedForCombine);
+            const t = tables.find((t: any) => t.id === selectedForCombine);
             if (!t) return null;
             return <rect x={t.pos_x - 6} y={t.pos_y - 6} width={TABLE_W + 12} height={TABLE_H + 12} rx={10} fill="none" stroke="#C9973A" strokeWidth="2" strokeDasharray="4 2" />;
           })()}
