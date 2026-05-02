@@ -42,13 +42,11 @@ export default function App() {
           <Route path="/bookings/analytics" element={<ProtectedRoute><BookingsAnalyticsPage /></ProtectedRoute>} />
           <Route path="/rota"                   element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
           <Route path="/rota-config"            element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
-          <Route path="/time-off" element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
           <Route path="/staff"                  element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
           <Route path="/time-off"               element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
-          <Route path="/wages" element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
           <Route path="/wages"                  element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
           <Route path="/inventory" element={<ProtectedRoute><InventoryHubPage /></ProtectedRoute>} />
-          <Route path="/inventory/*" element={<ProtectedRoute><InventoryHubPage /></ProtectedRoute>} /></ProtectedRoute>} />
+          <Route path="/inventory/*" element={<ProtectedRoute><InventoryHubPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
