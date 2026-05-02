@@ -17,6 +17,7 @@ import { BookingsPage } from './pages/BookingsPage';
 import { BookingsAnalyticsPage } from './pages/BookingsAnalyticsPage';
 import { FloorPlanPage } from './pages/FloorPlanPage';
 import { RecurringOrdersPage } from './pages/RecurringOrdersPage';
+import { InventoryHubPage } from './pages/InventoryHubPage';
 import { ChecklistsPage } from './pages/ChecklistsPage';
 import { ItemRequestsPage } from './pages/ItemRequestsPage';
 
@@ -36,21 +37,18 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/"                       element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/rota"                   element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
-          <Route path="/rota-config"            element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
-          <Route path="/staff"                  element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
-          <Route path="/time-off"               element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
-          <Route path="/wages"                  element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
-          <Route path="/inventory"              element={<ProtectedRoute><InventoryPage /></ProtectedRoute>} />
-          <Route path="/inventory/order"        element={<ProtectedRoute><InventoryOrderPage /></ProtectedRoute>} />
-          <Route path="/inventory/deliveries"   element={<ProtectedRoute><InventoryDeliveriesPage /></ProtectedRoute>} />
           <Route path="/bookings" element={<ProtectedRoute><BookingsPage /></ProtectedRoute>} />
           <Route path="/bookings/floor-plan" element={<FloorPlanPage />} />
           <Route path="/bookings/analytics" element={<ProtectedRoute><BookingsAnalyticsPage /></ProtectedRoute>} />
-          <Route path="/inventory/recurring" element={<ProtectedRoute><RecurringOrdersPage /></ProtectedRoute>} />
-          <Route path="/inventory/checklists" element={<ProtectedRoute><ChecklistsPage /></ProtectedRoute>} />
-          <Route path="/inventory/requests" element={<ProtectedRoute><ItemRequestsPage /></ProtectedRoute>} />
-          <Route path="/inventory/analytics"    element={<ProtectedRoute><InventoryAnalyticsPage /></ProtectedRoute>} />
+          <Route path="/rota"                   element={<ProtectedRoute><RotaPage /></ProtectedRoute>} />
+          <Route path="/rota-config"            element={<ProtectedRoute><RotaConfigPage /></ProtectedRoute>} />
+          <Route path="/time-off" element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
+          <Route path="/staff"                  element={<ProtectedRoute><StaffPage /></ProtectedRoute>} />
+          <Route path="/time-off"               element={<ProtectedRoute><TimeOffPage /></ProtectedRoute>} />
+          <Route path="/wages" element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
+          <Route path="/wages"                  element={<ProtectedRoute><WagesPage /></ProtectedRoute>} />
+          <Route path="/inventory" element={<ProtectedRoute><InventoryHubPage /></ProtectedRoute>} />
+          <Route path="/inventory/*" element={<ProtectedRoute><InventoryHubPage /></ProtectedRoute>} /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
