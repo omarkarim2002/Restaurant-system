@@ -265,7 +265,33 @@ function ReceiveModal({ deliveryId, onClose }: { deliveryId: string; onClose: ()
 
 function NewDeliveryModal({ suppliers, orders, prefillOrderId, onClose }: { suppliers: any[]; orders: any[]; prefillOrderId?: string | null; onClose: () => void }) {
   const createDelivery = useCreateDelivery();
+  const qc = useQueryClient();
   const prefillOrder = prefillOrderId ? orders.find((o: any) => o.id === prefillOrderId) : null;
+  const [addingSupplier, setAddingSupplier] = useState(false);
+  const [savingSupplier, setSavingSupplier] = useState(false);
+  const [newSupplierForm, setNewSupplierForm] = useState({ name: '', phone: '', email: '' });
+
+  async function saveNewSupplier() {
+    if (!newSupplierForm.name) return;
+    setSavingSupplier(true);
+    try {
+      const res = await api.post('/inventory/suppliers', {
+        name: newSupplierForm.name,
+        contact_phone: newSupplierForm.phone || undefined,
+        contact_email: newSupplierForm.email || undefined,
+      });
+      const newId = res.data?.data?.id || res.data?.id;
+      if (newId) f('supplier_id', newId);
+      qc.invalidateQueries({ queryKey: ['suppliers'] });
+      setAddingSupplier(false);
+      setNewSupplierForm({ name: '', phone: '', email: '' });
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to add supplier.');
+    } finally {
+      setSavingSupplier(false);
+    }
+  }
+
   const [form, setForm] = useState({
     supplier_id:   prefillOrder?.supplier_id || suppliers[0]?.id || '',
     order_id:      prefillOrderId || '',
@@ -300,13 +326,46 @@ function NewDeliveryModal({ suppliers, orders, prefillOrderId, onClose }: { supp
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div className="form-group">
             <label className="form-label">Supplier *</label>
-            <select value={form.supplier_id} onChange={e => f('supplier_id', e.target.value)}>
-              <option value="">No supplier</option>
-              {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '3px' }}>
-              Same suppliers as your recurring orders. Link to an order above to auto-select.
-            </div>
+            {!addingSupplier ? (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <select value={form.supplier_id} onChange={e => f('supplier_id', e.target.value)} style={{ flex: 1 }}>
+                  <option value="">Select supplier…</option>
+                  {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <button type="button" onClick={() => setAddingSupplier(true)}
+                  style={{ fontSize: '12px', padding: '7px 10px', background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-secondary)', borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap', color: 'var(--color-text-secondary)' }}>
+                  + New
+                </button>
+              </div>
+            ) : (
+              <div style={{ background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-secondary)', borderRadius: '10px', padding: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '10px' }}>New supplier</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <input value={newSupplierForm.name} onChange={e => setNewSupplierForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Supplier name *" autoFocus style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <input value={newSupplierForm.phone} onChange={e => setNewSupplierForm(p => ({ ...p, phone: e.target.value }))}
+                    placeholder="Phone (optional)" style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <input value={newSupplierForm.email} onChange={e => setNewSupplierForm(p => ({ ...p, email: e.target.value }))}
+                    placeholder="Email (optional)" style={{ fontSize: '13px', padding: '7px 10px' }} />
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '2px' }}>
+                    <button type="button" onClick={saveNewSupplier}
+                      disabled={savingSupplier || !newSupplierForm.name}
+                      style={{ flex: 1, padding: '7px', fontSize: '12px', background: '#C41E3A', color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer', fontWeight: 500, opacity: !newSupplierForm.name ? 0.5 : 1 }}>
+                      {savingSupplier ? 'Adding…' : 'Add supplier'}
+                    </button>
+                    <button type="button" onClick={() => { setAddingSupplier(false); setNewSupplierForm({ name: '', phone: '', email: '' }); }}
+                      style={{ padding: '7px 12px', fontSize: '12px', borderRadius: '7px', cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {form.supplier_id && !addingSupplier && (
+              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '3px' }}>
+                Same supplier list as recurring orders.
+              </div>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Delivery date *</label>
