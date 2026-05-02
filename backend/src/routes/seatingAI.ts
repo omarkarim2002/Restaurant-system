@@ -299,7 +299,7 @@ router.get('/floor-plan', authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-export { getTableAvailability, generateSeatingOptions };
+
 
 // ── POST /bookings/seating/block-recommend ────────────────────────────────────
 // Haiku analyses the day's bookings and recommends which tables to block
@@ -396,7 +396,6 @@ Only recommend blocking truly free tables. If it's a busy day with ${total_cover
     res.json({ data: result });
   } catch (err) { next(err); }
 });
-
 
 export { getTableAvailability, generateSeatingOptions };
 export default router;
