@@ -301,6 +301,28 @@ router.get('/floor-plan', authenticate, async (req, res, next) => {
 
 
 
+
+// ── GET /bookings/seating/adjacencies-all — all adjacency pairs ───────────────
+router.get('/adjacencies-all', authenticate, async (_req, res, next) => {
+  try {
+    const pairs = await db('table_adjacencies as ta')
+      .join('restaurant_tables as a', 'ta.table_a', 'a.id')
+      .join('restaurant_tables as b', 'ta.table_b', 'b.id')
+      .where('a.is_active', true)
+      .where('b.is_active', true)
+      .select('ta.table_a', 'ta.table_b', 'a.name as name_a', 'b.name as name_b');
+    // Deduplicate (each pair stored twice A→B and B→A)
+    const seen = new Set<string>();
+    const unique = pairs.filter((p: any) => {
+      const key = [p.table_a, p.table_b].sort().join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    res.json({ data: unique });
+  } catch (err) { next(err); }
+});
+
 // ── POST /bookings/seating/block-recommend ────────────────────────────────────
 // Haiku analyses the day's bookings and recommends which tables to block
 // to consolidate covers and free up staff from running the whole floor.
@@ -346,22 +368,29 @@ ${bookingList}
 
 Goals:
 1. Make sure all booked covers can be seated comfortably
-2. Consolidate open tables into a smaller area when it's quiet — saves staff running the whole floor
-3. Block tables that are far from booked tables, awkward to serve alone, or too small/large to be useful
-4. Never block a table that already has a booking
+2. Recommend combining adjacent free tables for large walk-in parties (${total_covers} covers already booked)
+3. Keep some free tables open as singles for small walk-ins (2-4 covers)
+4. Block tables that add no value — too far from the action, awkward to staff, or excess capacity
+5. Never block a table that already has a booking
 
 Return ONLY a JSON object, no other text:
 {
-  "summary": "One sentence explaining the recommendation",
+  "summary": "One sentence explaining the overall recommendation",
+  "combine": [
+    { "tables": ["Table 3", "Table 4"], "combined_capacity": 8, "reason": "Good for groups of 6-8 walk-ins" }
+  ],
   "block": [
     { "table_id": "...", "table_name": "Table X", "capacity": 4, "reason": "Brief reason" }
   ],
   "keep_open": [
-    { "table_id": "...", "table_name": "Table Y", "capacity": 6 }
+    { "table_id": "...", "table_name": "Table Y", "capacity": 2 }
   ]
 }
 
-Only recommend blocking truly free tables. If it's a busy day with ${total_covers}+ covers, suggest blocking fewer tables.`,
+combine: pairs of adjacent or nearby tables to push together for larger parties. Only suggest if it makes sense.
+block: truly free tables that serve no purpose tonight.
+keep_open: free tables to hold open for walk-ins.
+Never block booked tables. If busy (many covers), suggest fewer blocks and more combines.`,
         }],
       }),
     });
