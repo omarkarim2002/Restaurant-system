@@ -305,11 +305,13 @@ function TemplateDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [addingItem, setAddingItem] = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  const [generatedOrderId, setGeneratedOrderId] = useState<string | null>(null);
+
   async function handleGenerate() {
     setGenerating(true);
     try {
-      await generate.mutateAsync({});
-      alert('✓ Order generated. Find it in Daily Orders.');
+      const result = await generate.mutateAsync({});
+      setGeneratedOrderId(result.data?.id || null);
     } catch (e: any) { alert(e.response?.data?.error || 'Failed to generate.'); }
     finally { setGenerating(false); }
   }
@@ -400,6 +402,24 @@ function TemplateDetail({ id, onBack }: { id: string; onBack: () => void }) {
           )}
         </div>
       </div>
+
+      {/* Generated order confirmation banner */}
+      {generatedOrderId && (
+        <div style={{ background: '#eaf3de', border: '0.5px solid #97c459', borderRadius: '10px', padding: '12px 16px', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '13px', fontWeight: 500, color: '#27500a' }}>✓ Order generated from this template</div>
+            <div style={{ fontSize: '12px', color: '#3d6b1a', marginTop: '2px' }}>Ready to send to {template.supplier_name}. Log the delivery once it arrives.</div>
+          </div>
+          <button
+            onClick={() => {
+              window.location.href = `/inventory/deliveries?prefill_order=${generatedOrderId}`;
+            }}
+            style={{ fontSize: '12px', padding: '6px 12px', background: 'white', border: '0.5px solid #97c459', borderRadius: '7px', color: '#27500a', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+            Log delivery when it arrives →
+          </button>
+          <button onClick={() => setGeneratedOrderId(null)} style={{ fontSize: '16px', color: '#97c459', border: 'none', background: 'none', cursor: 'pointer' }}>×</button>
+        </div>
+      )}
 
       {adjusting && <AdjustModal templateId={id} line={adjusting} onClose={() => setAdjusting(null)} />}
       {addingItem && <AddItemModal templateId={id} onClose={() => setAddingItem(false)} />}

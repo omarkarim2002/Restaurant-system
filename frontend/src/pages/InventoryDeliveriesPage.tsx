@@ -263,14 +263,15 @@ function ReceiveModal({ deliveryId, onClose }: { deliveryId: string; onClose: ()
 
 // ── New delivery modal ────────────────────────────────────────────────────────
 
-function NewDeliveryModal({ suppliers, orders, onClose }: { suppliers: any[]; orders: any[]; onClose: () => void }) {
+function NewDeliveryModal({ suppliers, orders, prefillOrderId, onClose }: { suppliers: any[]; orders: any[]; prefillOrderId?: string | null; onClose: () => void }) {
   const createDelivery = useCreateDelivery();
+  const prefillOrder = prefillOrderId ? orders.find((o: any) => o.id === prefillOrderId) : null;
   const [form, setForm] = useState({
-    supplier_id:   suppliers[0]?.id || '',
-    order_id:      '',
+    supplier_id:   prefillOrder?.supplier_id || suppliers[0]?.id || '',
+    order_id:      prefillOrderId || '',
     delivery_date: format(new Date(), 'yyyy-MM-dd'),
     invoice_ref:   '',
-    notes:         '',
+    notes:         prefillOrder?.notes?.startsWith('From recurring:') ? prefillOrder.notes.replace('From recurring: ', 'Delivery for: ') : '',
   });
   const [error, setError] = useState('');
 
@@ -289,7 +290,10 @@ function NewDeliveryModal({ suppliers, orders, onClose }: { suppliers: any[]; or
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
       <div style={{ background: 'white', borderRadius: '16px', width: '420px', padding: '1.75rem', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <div>
           <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Log new delivery</h3>
+          {prefillOrder && <div style={{ fontSize: '11px', color: '#27500a', marginTop: '3px' }}>Pre-filled from recurring order</div>}
+        </div>
           <button onClick={onClose} style={{ border: 'none', background: 'none', fontSize: '20px', color: '#aaa', cursor: 'pointer' }}>×</button>
         </div>
         {error && <div style={{ background: '#fde8ec', border: '0.5px solid #f5b8c4', borderRadius: '8px', padding: '8px 12px', marginBottom: '1rem', fontSize: '13px', color: '#9e1830' }}>{error}</div>}
@@ -300,6 +304,9 @@ function NewDeliveryModal({ suppliers, orders, onClose }: { suppliers: any[]; or
               <option value="">No supplier</option>
               {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '3px' }}>
+              Same suppliers as your recurring orders. Link to an order above to auto-select.
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Delivery date *</label>
@@ -307,9 +314,16 @@ function NewDeliveryModal({ suppliers, orders, onClose }: { suppliers: any[]; or
           </div>
           <div className="form-group">
             <label className="form-label">Link to order (optional)</label>
-            <select value={form.order_id} onChange={e => f('order_id', e.target.value)}>
+            <select value={form.order_id} onChange={e => {
+              f('order_id', e.target.value);
+              // Auto-select supplier from the linked order
+              const linked = orders.find((o: any) => o.id === e.target.value);
+              if (linked?.supplier_id) f('supplier_id', linked.supplier_id);
+            }}>
               <option value="">No linked order</option>
-              {orders.map((o: any) => <option key={o.id} value={o.id}>{format(parseISO(o.order_date), 'EEE d MMM yyyy')}</option>)}
+              {orders.map((o: any) => <option key={o.id} value={o.id}>
+                {format(parseISO(o.order_date), 'EEE d MMM yyyy')}{o.notes?.startsWith('From recurring:') ? ' · ' + o.notes.replace('From recurring: ', '') : o.supplier_name ? ' · ' + o.supplier_name : ''}
+              </option>)}
             </select>
           </div>
           <div className="form-group">
@@ -378,6 +392,20 @@ function SupplierModal({ onClose }: { onClose: () => void }) {
 
 export function InventoryDeliveriesPage() {
   const [tab, setTab] = useState<'deliveries' | 'suppliers'>('deliveries');
+
+  // Auto-open new delivery modal if prefill_order param is present
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prefillId = params.get('prefill_order');
+    if (prefillId) {
+      setPrefillOrderId(prefillId);
+      setShowNew(true);
+      // Clean URL without reloading
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const [prefillOrderId, setPrefillOrderId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showNewSupplier, setShowNewSupplier] = useState(false);
   const [receivingId, setReceivingId] = useState<string | null>(null);
@@ -535,7 +563,7 @@ export function InventoryDeliveriesPage() {
         )
       )}
 
-      {showNew && <NewDeliveryModal suppliers={suppliers} orders={orders} onClose={() => setShowNew(false)} />}
+      {showNew && <NewDeliveryModal suppliers={suppliers} orders={orders} prefillOrderId={prefillOrderId} onClose={() => { setShowNew(false); setPrefillOrderId(null); }} />}
       {showNewSupplier && <SupplierModal onClose={() => setShowNewSupplier(false)} />}
       {receivingId && <ReceiveModal deliveryId={receivingId} onClose={() => setReceivingId(null)} />}
     </div>
